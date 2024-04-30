@@ -84,18 +84,6 @@ def load_all_sessions():
     return sessions
 
 
-def calculate_marks(min_val, max_val, step, threshold):
-    marks = {}
-    for i in range(min_val, max_val + 1, step):
-        if i < threshold:
-            marks[i] = f'{i} sentences'
-        else:
-            # Convert sentences to paragraphs, assuming 5 sentences per paragraph
-            paragraphs = round(i / 5)
-            marks[i] = f'{paragraphs} paragraphs'
-    return marks
-
-
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
 
