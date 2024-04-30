@@ -3,9 +3,9 @@ from web_scraper import process_query
 from langchain.chains import RetrievalQA
 
 
-def scrape_and_find(query):
+def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens):
     print("Initialization...")
-    client = Groq(api_key='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')
+    client = Groq(api_key=groq_api_key)
     chat_completion = client.chat.completions.create(
         messages=[
             {
@@ -27,13 +27,13 @@ def scrape_and_find(query):
                 "content": query,
             }
         ],
-        model="mixtral-8x7b-32768",
+        model=model_dropdown,
+        temperature=temp,
+        max_tokens=max_tokens
     )
 
     questions = json.loads(chat_completion.choices[0].message.content)
-    print(questions)
-
-    retriever = asyncio.run(process_query(questions['followUp'][0]))
+    retriever = asyncio.run(process_query(questions['followUp'][0], brave_id))
     prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
                                                             Context: {context} 
 
@@ -43,8 +43,8 @@ def scrape_and_find(query):
                                                             Helpful answer:""",
                                      input_variables=['context', 'question'])
 
-    chat_model = ChatGroq(temperature=0, model_name="mixtral-8x7b-32768",
-                          api_key='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')
+    chat_model = ChatGroq(temperature=temp, model_name=model_dropdown,
+                          api_key=groq_api_key, max_tokens=max_tokens)
     print("Almost finished...")
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever,
                                            return_source_documents=True,

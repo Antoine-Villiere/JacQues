@@ -1,11 +1,6 @@
-import asyncio
+from IMPORT import *
 import aiohttp
 from bs4 import BeautifulSoup
-from sentence_transformers import SentenceTransformer, util
-from IMPORT import *
-
-model = SentenceTransformer('all-MiniLM-L6-v2')
-
 
 async def fetch_page_content(session, url, timeout=800):
     try:
@@ -27,12 +22,12 @@ async def clean_and_extract_content(html):
     return ' '.join(soup.stripped_strings)
 
 
-async def fetch_search_results(session, query, results_count=3):
+async def fetch_search_results(session, brave_id,query, results_count=3):
     url = f'https://api.search.brave.com/res/v1/web/search?q={query}&count={results_count}'
     headers = {
         'Accept': 'application/json',
         'Accept-Encoding': 'gzip',
-        'X-Subscription-Token': "BSA6vLQFcC_DmOqaTk4Nm8jLF1sqTxe"}
+        'X-Subscription-Token': brave_id}
     async with session.get(url, headers=headers) as response:
         response.raise_for_status()
         json_response = await response.json()
@@ -74,10 +69,10 @@ async def create_vector_database(contents):
     return vector_store, embed_model
 
 
-async def process_query(query):
+async def process_query(query,brave_id):
     async with aiohttp.ClientSession() as session:
         print("Fetch sources...")
-        sources = await fetch_search_results(session, query)
+        sources = await fetch_search_results(session,brave_id, query)
         print("Get information...")
         contents = await fetch_and_process_links(session, sources)
         print("Check coherence...")

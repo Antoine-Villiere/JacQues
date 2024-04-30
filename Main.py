@@ -1,11 +1,21 @@
-import json
-
 from IMPORT import *
 from Scrape_and_find import scrape_and_find
 from Parse_and_find import main
 
 session_id_global = None
 new_chat = None
+
+CHAT_DIR = 'chat_sessions'
+if not os.path.exists(CHAT_DIR):
+    os.mkdir(CHAT_DIR)
+
+# Path to the file
+file_path = r'.\assets\prompt'
+
+
+# Function to read file content
+with open(file_path, 'r', encoding='utf-8') as file:
+    prompt = file.read()
 
 # Initialize Dash app with Bootstrap theme
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP], suppress_callback_exceptions=True)
@@ -29,25 +39,6 @@ btn_style = {
     'padding': '10px',
     'marginBottom': '10px'
 }
-
-CHAT_DIR = 'chat_sessions'
-if not os.path.exists(CHAT_DIR):
-    os.mkdir(CHAT_DIR)
-
-# Path to the file
-file_path = r'.\assets\prompt'
-
-
-# Function to read file content
-def read_file(path):
-    if os.path.exists(path):
-        with open(path, 'r') as file:
-            return file.read()
-    else:
-        return "File not found."
-
-
-prompt = read_file(file_path)
 
 
 def save_chat(session_id, data, new_name=None):
@@ -93,6 +84,18 @@ def load_all_sessions():
     return sessions
 
 
+def calculate_marks(min_val, max_val, step, threshold):
+    marks = {}
+    for i in range(min_val, max_val + 1, step):
+        if i < threshold:
+            marks[i] = f'{i} sentences'
+        else:
+            # Convert sentences to paragraphs, assuming 5 sentences per paragraph
+            paragraphs = round(i / 5)
+            marks[i] = f'{paragraphs} paragraphs'
+    return marks
+
+
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
 
@@ -136,36 +139,64 @@ app.layout = dbc.Container([
 
         dbc.Col([
             html.Div([
-                html.H4('Settings', style={'marginBottom': '10px'}),
-                html.Div('GROQ API KEY', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.H4('Settings', style={'marginBottom': '20px'}),
+                html.H6('Degree of creativity', style={'marginBottom': '10px'}),
+                html.Div([
+                    dcc.Slider(
+                        id='temperature-slider',
+                        min=0,
+                        max=100,
+                        step=1,
+                        value=0,
+                        marks={0: 'Accurate', 50: 'Innovative', 100: 'Highly creative'},
+                        tooltip={"placement": "bottom", "always_visible": False}
+                    ),
+                ], style={'width': '100%', 'marginBottom': '15px'}),
+                html.H6('Number of sentences to generate', style={'marginBottom': '10px'}),
+                html.Div([
+                    dcc.Slider(
+                        id='tokens-slider',
+                        min=5,
+                        max=320,
+                        step=1,
+                        value=25,
+                        marks={5: '5 sentences max', 320: '8 pages max'},
+                        tooltip={"placement": "bottom", "always_visible": False}
+                    ),
+                ], style={'width': '100%', 'marginBottom': '15px'}),
+
+                html.H6('GROQ API KEY', style={'marginBottom': '10px'}),
 
                 dcc.Textarea(
                     id='groq-api-key',
                     value='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',
                     style={'width': '100%', 'height': '7%', 'overflowY': 'auto', 'padding': '10px',
-                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
+                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}',
+                           'marginBottom': '15px'},
 
                 ),
-                html.Div('LLAMAPARSE API KEY', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.H6('LLAMAPARSE API KEY', style={'marginBottom': '10px'}),
 
                 dcc.Textarea(
                     id='llama-parse-id',
                     value='llx-KsMowITWRhVKq1uVChXVvDIxfg8chXIakXEtEKLdKzhqhGvZ',
                     style={'width': '100%', 'height': '7%', 'overflowY': 'auto', 'padding': '10px',
-                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
+                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}',
+                           'marginBottom': '15px'},
 
                 ),
 
-html.Div('BRAVE API KEY', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.H6('BRAVE API KEY', style={'marginBottom': '10px'}),
 
                 dcc.Textarea(
                     id='brave-id',
                     value='BSA6vLQFcC_DmOqaTk4Nm8jLF1sqTxe',
-                    style={'width': '100%', 'height': '7%', 'overflowY': 'auto', 'padding': '10px',
-                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
+                    style={'width': '100%', 'height': '4%', 'overflowY': 'auto', 'padding': '10px',
+                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}',
+                           'marginBottom': '15px'},
 
                 ),
-                html.Div('Select Model', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+                html.H6('Select Model', style={'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
                     options=[
@@ -173,12 +204,12 @@ html.Div('BRAVE API KEY', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
                         {'label': 'Mixtral 8x22b', 'value': 'Mixtral8x22b'}
                     ],
                     value='Llama3',
-                    style={'marginBottom': '10px'}
+                    style={'marginBottom': '15px'}
                 ),
                 dcc.Textarea(
                     id='model-prompt',
                     value=prompt,
-                    style={'marginBottom': '10px', 'width': '100%', 'height': '50%', 'overflowY': 'auto',
+                    style={'marginBottom': '10px', 'width': '100%', 'height': '25%', 'overflowY': 'auto',
                            'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
 
                 ),
@@ -301,12 +332,21 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
     [Input('send-button', 'n_clicks'),
      Input('new-chat-button', 'n_clicks'),
      Input('upload-data', 'contents'),
-     Input({'type': 'chat-session', 'index': ALL}, 'n_clicks')],
+     Input({'type': 'chat-session', 'index': ALL}, 'n_clicks'),
+     Input('temperature-slider', 'value'),
+     Input('tokens-slider', 'value'),
+     Input('groq-api-key', 'value'),
+     Input('llama-parse-id', 'value'),
+     Input('brave-id', 'value'),
+     Input('model-dropdown', 'value'),
+     Input('model-prompt', 'value'),
+     ],
     [State('user-input', 'value'),
      State('session-id', 'data'),
      State('upload-data', 'filename')]
 )
-def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, user_input, session_id, filename):
+def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, temp, max_tokens, groq_api_key,
+                llama_parse_id, brave_id, model_dropdown, model_prompt, user_input, session_id, filename):
     global session_id_global, new_chat
     session_id = session_id_global
     ctx = callback_context
@@ -334,14 +374,14 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, u
         if user_input.startswith('/web'):
             print("web crawling")
             user_input = user_input.replace("/web", "")
-            ai_answer = scrape_and_find(query=user_input)
-            ai_answer= ai_answer['result']
+            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+            ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
             print("data handling")
             user_input = user_input.replace("/data", "")
             file_paths = ["./test_docs/test.pdf", "./test_docs/Hi Maria.docx"]
-            ai_answer = json.loads(asyncio.run(main(file_paths)))['result']
+            ai_answer = json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id,temp, max_tokens)))['result']
 
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
