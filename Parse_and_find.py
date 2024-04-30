@@ -13,8 +13,8 @@ GROQ_API_KEY = os.getenv('GROQ_API_KEY', 'gsk_gt8LlYPHk7VG97ngR9xqWGdyb3FYu7aEq8
 async def load_or_parse_data(file_paths):
     parsed_data = []
     for file_path in file_paths:
-        data_file = f"./data/parsed_data_{os.path.basename(file_path)}.pkl"
-        os.makedirs("./data", exist_ok=True)
+        data_file = f"./data/data_parse/parsed_data_{os.path.basename(file_path)}.pkl"
+        os.makedirs("./data/data_parse", exist_ok=True)
 
         if os.path.exists(data_file):
             parsed_data.append(joblib.load(data_file))
@@ -31,7 +31,7 @@ async def load_or_parse_data(file_paths):
 
 async def create_vector_database(file_paths):
     documents = await load_or_parse_data(file_paths)
-    markdown_path = './data/output.md'
+    markdown_path = './data/data_parse/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for data in documents:
             for doc in data:
@@ -45,7 +45,7 @@ async def create_vector_database(file_paths):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
     chunks = text_splitter.split_documents(docs)
     embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
-    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model, persist_directory="./chroma_db",
+    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model, persist_directory="./chroma/chroma_db",
                                          collection_name="rag")
     return vector_store, embed_model
 
@@ -55,7 +55,7 @@ async def main(file_paths, model="mixtral-8x7b-32768", api_key=GROQ_API_KEY):
     chat_model = ChatGroq(temperature=0, model_name=model, api_key=api_key)
     memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
     vector_store, embed_model = await create_vector_database(file_paths)
-    vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma_db", collection_name="rag")
+    vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma/chroma_db", collection_name="rag")
     retriever = vector_store.as_retriever(search_kwargs={'k': 3})
     prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
                                                 Context: {context} 
