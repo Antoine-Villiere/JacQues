@@ -49,8 +49,10 @@ ICON_MAP = {
     'jpg': 'fa-file-image',
     'png': 'fa-file-image',
     'zip': 'fa-file-archive',
-    'other': 'fa-file'
+    'other': 'fa-file',
+    'csv': 'fa-file-csv'
 }
+
 
 def save_chat(session_id, data, new_name=None):
     """ Save chat data to a JSON file. Optionally rename the session. """
@@ -128,7 +130,7 @@ app.layout = dbc.Container([
                     }),
                 ], style={'display': 'flex', 'alignItems': 'center', 'backgroundColor': 'white', 'borderRadius': '10px',
                           'border': f'1px solid {colors["secondary"]}', 'marginBottom': '30px'}),
-                html.Div([],id='file-preview', style={'marginTop': '5px', 'marginBottom': '5px'}),
+                html.Div([], id='file-preview', style={'marginTop': '5px', 'marginBottom': '5px'}),
 
                 dcc.Upload(html.Button('Upload Document', style=btn_style), id='upload-data', multiple=True,
                            style={'marginTop': '5px'}),
@@ -157,10 +159,10 @@ app.layout = dbc.Container([
                     dcc.Slider(
                         id='tokens-slider',
                         min=5,
-                        max=320,
+                        max=31950 // 100,
                         step=1,
                         value=25,
-                        marks={5: '5 sentences max', 320: '8 pages max'},
+                        marks={5: '5 sentences max', 31950 // 100: '8 pages max'},
                         tooltip={"placement": "bottom", "always_visible": False}
                     ),
                 ], style={'width': '100%', 'marginBottom': '15px'}),
@@ -200,10 +202,10 @@ app.layout = dbc.Container([
                 dcc.Dropdown(
                     id='model-dropdown',
                     options=[
-                        {'label': 'Llama3', 'value': 'Llama3'},
-                        {'label': 'Mixtral 8x22b', 'value': 'Mixtral8x22b'}
+                        {'label': 'llama3', 'value': 'llama3-70b-8192'},
+                        {'label': 'Mixtral 8x7b', 'value': 'mixtral-8x7b-32768'}
                     ],
-                    value='Llama3',
+                    value='mixtral-8x7b-32768',
                     style={'marginBottom': '15px'}
                 ),
                 dcc.Textarea(
@@ -244,6 +246,21 @@ def create_session_div(session_id):
 
 
 @app.callback(
+    Output('tokens-slider', 'max'),
+    Output('tokens-slider', 'marks'),
+    Input('model-dropdown', 'value')
+)
+def update_max_tokens(model_name):
+    model_tokens = {
+        'mixtral-8x7b-32768': 31950,
+        'llama3-70b-8192': 8192
+    }
+    max_tokens = model_tokens.get(model_name, 31950)
+    marks = {5: '5 sentences max', max_tokens: f'{round(max_tokens * 0.00025, 0)} pages max'}
+    return max_tokens // 100, marks
+
+
+@app.callback(
     Output('file-preview', 'children'),
     Input('upload-data', 'contents'),
     State('upload-data', 'filename'),
@@ -259,18 +276,23 @@ def update_file_preview(contents, filenames):
     children = [
         html.Div([
             html.I(className=f"fas {file_icon(filename.split('.')[-1])}", style={'fontSize': '24px'}),
-            html.P(filename, style={'display': 'inline-block', 'marginLeft': '10px'}),
-            html.Button('×', id={'type': 'delete-file', 'index': i}, className='close', **{'aria-label': 'Close'},
-                        style={'fontSize': '16px', 'marginLeft': '10px'})
+            html.P(f'{filename[:6]}...',
+                   style={'display': 'inline-block', 'marginLeft': '10px', 'maxWidth': '150px', 'overflow': 'hidden',
+                          'textOverflow': 'ellipsis', 'verticalAlign': 'middle'}),
+            html.Button('×', id={'type': 'delete-file', 'index': i}, className='close',
+                        **{'aria-label': 'Close file'},
+                        style={'fontSize': '16px', 'marginLeft': '10px', 'cursor': 'pointer', 'verticalAlign': 'middle'})
         ], className='d-flex align-items-center', style={'marginBottom': '5px', 'marginTop': '5px'})
         for i, filename in enumerate(filenames)
     ]
     return children
 
+
+
 @app.callback(
     Output('upload-data', 'filename'),
-    [Input({'type': 'delete-file', 'index': ALL}, 'n_clicks')],
-    [State('upload-data', 'filename')]
+    Input({'type': 'delete-file', 'index': ALL}, 'n_clicks'),
+    State('upload-data', 'filename')
 )
 def remove_file(delete_clicks, filenames):
     ctx = dash.callback_context
@@ -394,6 +416,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         raise PreventUpdate
     button_id = ctx.triggered[0]['prop_id']
     ai_answer = ''
+    temp = temp / 100
+    max_tokens = max_tokens * 100
 
     if 'send-button' in button_id:
         if not user_input:
@@ -422,8 +446,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             user_input = user_input.replace("/data", "")
             file_paths = ["./test_docs/test.pdf", "./test_docs/Hi Maria.docx"]
             ai_answer = \
-            json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
-                'result']
+                json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                    'result']
 
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
