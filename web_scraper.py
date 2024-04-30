@@ -54,8 +54,8 @@ async def fetch_and_process_links(session, sources):
 
 
 async def create_vector_database(contents):
-    os.makedirs("./data_web", exist_ok=True)
-    markdown_path = './data_web/output.md'
+    os.makedirs("./data/data_web", exist_ok=True)
+    markdown_path = './data/data_web/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for content in contents:
             if content['html']:
@@ -69,7 +69,7 @@ async def create_vector_database(contents):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
     chunks = text_splitter.split_documents(docs)
     embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
-    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model, persist_directory="./chroma_db_2",
+    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model, persist_directory="./chroma/chroma_db_2",
                                          collection_name="rag")
     return vector_store, embed_model
 
@@ -82,6 +82,6 @@ async def process_query(query):
         contents = await fetch_and_process_links(session, sources)
         print("Check coherence...")
         vector_store, embed_model = await create_vector_database(contents)
-        vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma_db_2", collection_name="rag")
+        vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma/chroma_db_2", collection_name="rag")
         retriever = vector_store.as_retriever(search_kwargs={'k': 3})
         return retriever
