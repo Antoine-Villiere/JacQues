@@ -155,6 +155,16 @@ app.layout = dbc.Container([
                            'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
 
                 ),
+
+html.Div('BRAVE API KEY', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
+
+                dcc.Textarea(
+                    id='brave-id',
+                    value='BSA6vLQFcC_DmOqaTk4Nm8jLF1sqTxe',
+                    style={'width': '100%', 'height': '7%', 'overflowY': 'auto', 'padding': '10px',
+                           'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
+
+                ),
                 html.Div('Select Model', style={'fontWeight': 'bold', 'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
@@ -168,7 +178,7 @@ app.layout = dbc.Container([
                 dcc.Textarea(
                     id='model-prompt',
                     value=prompt,
-                    style={'marginBottom': '10px', 'width': '100%', 'height': '65%', 'overflowY': 'auto',
+                    style={'marginBottom': '10px', 'width': '100%', 'height': '50%', 'overflowY': 'auto',
                            'borderRadius': '10px', 'border': f'1px solid {colors["secondary"]}'},
 
                 ),
