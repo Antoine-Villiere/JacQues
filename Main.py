@@ -12,7 +12,6 @@ if not os.path.exists(CHAT_DIR):
 # Path to the file
 file_path = r'.\assets\prompt'
 
-
 # Function to read file content
 with open(file_path, 'r', encoding='utf-8') as file:
     prompt = file.read()
@@ -40,6 +39,18 @@ btn_style = {
     'marginBottom': '10px'
 }
 
+# Define a dictionary to map file extensions to icon class names (assuming use of FontAwesome or similar)
+ICON_MAP = {
+    'pdf': 'fa-file-pdf',
+    'docx': 'fa-file-word',
+    'xlsx': 'fa-file-excel',
+    'pptx': 'fa-file-powerpoint',
+    'txt': 'fa-file-alt',
+    'jpg': 'fa-file-image',
+    'png': 'fa-file-image',
+    'zip': 'fa-file-archive',
+    'other': 'fa-file'
+}
 
 def save_chat(session_id, data, new_name=None):
     """ Save chat data to a JSON file. Optionally rename the session. """
@@ -116,10 +127,11 @@ app.layout = dbc.Container([
                         'padding': '15px',
                     }),
                 ], style={'display': 'flex', 'alignItems': 'center', 'backgroundColor': 'white', 'borderRadius': '10px',
-                          'border': f'1px solid {colors["secondary"]}', 'marginBottom': '40px'}),
+                          'border': f'1px solid {colors["secondary"]}', 'marginBottom': '30px'}),
+                html.Div([],id='file-preview', style={'marginTop': '5px', 'marginBottom': '5px'}),
 
                 dcc.Upload(html.Button('Upload Document', style=btn_style), id='upload-data', multiple=True,
-                           style={'marginTop': '10px'}),
+                           style={'marginTop': '5px'}),
                 dcc.Store(id='session-id'),
             ], style={'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '10px',
                       'border': f'1px solid {colors["secondary"]}', 'height': '95vh'})
@@ -229,6 +241,46 @@ def create_session_div(session_id):
             'margin': '5px', 'borderRadius': '5px', 'display': 'flex', 'alignItems': 'center',
             'justifyContent': 'space-between', 'backgroundColor': '#FFF', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
         })
+
+
+@app.callback(
+    Output('file-preview', 'children'),
+    Input('upload-data', 'contents'),
+    State('upload-data', 'filename'),
+    prevent_initial_call=True
+)
+def update_file_preview(contents, filenames):
+    if contents is None:
+        raise PreventUpdate
+
+    def file_icon(ext):
+        return ICON_MAP.get(ext, ICON_MAP['other'])
+
+    children = [
+        html.Div([
+            html.I(className=f"fas {file_icon(filename.split('.')[-1])}", style={'fontSize': '24px'}),
+            html.P(filename, style={'display': 'inline-block', 'marginLeft': '10px'}),
+            html.Button('×', id={'type': 'delete-file', 'index': i}, className='close', **{'aria-label': 'Close'},
+                        style={'fontSize': '16px', 'marginLeft': '10px'})
+        ], className='d-flex align-items-center', style={'marginBottom': '5px', 'marginTop': '5px'})
+        for i, filename in enumerate(filenames)
+    ]
+    return children
+
+@app.callback(
+    Output('upload-data', 'filename'),
+    [Input({'type': 'delete-file', 'index': ALL}, 'n_clicks')],
+    [State('upload-data', 'filename')]
+)
+def remove_file(delete_clicks, filenames):
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return filenames
+    button_id = ctx.triggered[0]['prop_id']
+    index = json.loads(button_id)['index']
+    if delete_clicks[index] is not None:
+        filenames.pop(index)
+    return filenames
 
 
 @app.callback(
@@ -369,7 +421,9 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             print("data handling")
             user_input = user_input.replace("/data", "")
             file_paths = ["./test_docs/test.pdf", "./test_docs/Hi Maria.docx"]
-            ai_answer = json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id,temp, max_tokens)))['result']
+            ai_answer = \
+            json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                'result']
 
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
