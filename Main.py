@@ -1,12 +1,14 @@
 from IMPORT import *
 from Scrape_and_find import scrape_and_find
 from Parse_and_find import main
-import os
+from chat_management import *
+from config import *
+from settings import *
 
 session_id_global = None
 new_chat = None
 
-CHAT_DIR = 'chat_sessions'
+
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 
@@ -20,180 +22,10 @@ with open(file_path, 'r', encoding='utf-8') as file:
     prompt = file.read()
 
 # Initialize Dash app with Bootstrap theme
+app_settings = load_settings()
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP,
                                                 "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css"],
                 suppress_callback_exceptions=True)
-
-# Define a consistent color scheme
-colors = {
-    'background': '#f8f9fa',
-    'text': '#343a40',
-    'primary': '#005f73',
-    'secondary': '#e9d8a6',
-    'user': '#94d2bd',
-}
-
-# Define some styles that will be used repeatedly
-btn_style = {
-    'width': '100%',
-    'backgroundColor': colors['primary'],
-    'color': 'white',
-    'borderRadius': '5px',
-    'border': 'none',
-    'padding': '10px',
-    'marginBottom': '10px'
-}
-
-# Define a dictionary to map file extensions to icon class names (assuming use of FontAwesome or similar)
-ICON_MAP = {
-    'csv': ('fa-file-csv', '#cb4335'),
-    'docx': ('fa-file-word', '#2e86c1'),
-    'epub': ('fa-file-alt', '#f4d03f'),
-    'hwp': ('fa-file', '#5dade2'),
-    'ipynb': ('fa-file-code', '#a569bd'),
-    'jpeg': ('fa-file-image', '#a3e4d7'),
-    'jpg': ('fa-file-image', '#a3e4d7'),
-    'mbox': ('fa-file-archive', '#85929e'),
-    'md': ('fa-file-alt', '#5d6d7e'),
-    'mp3': ('fa-file-audio', '#d35400'),
-    'mp4': ('fa-file-video', '#d35400'),
-    'pdf': ('fa-file-pdf', '#e74c3c'),
-    'png': ('fa-file-image', '#1abc9c'),
-    'ppt': ('fa-file-powerpoint', '#dc7633'),
-    'pptm': ('fa-file-powerpoint', '#dc7633'),
-    'pptx': ('fa-file-powerpoint', '#dc7633'),
-    'doc': ('fa-file-word', '#2e86c1'),
-    'docm': ('fa-file-word', '#2e86c1'),
-    'dot': ('fa-file-word', '#2e86c1'),
-    'dotx': ('fa-file-word', '#2e86c1'),
-    'dotm': ('fa-file-word', '#2e86c1'),
-    'rtf': ('fa-file-word', '#2e86c1'),
-    'wps': ('fa-file-word', '#2e86c1'),
-    'wpd': ('fa-file-word', '#2e86c1'),
-    'sxw': ('fa-file-openoffice', '#2980b9'),
-    'stw': ('fa-file-openoffice', '#2980b9'),
-    'sxg': ('fa-file-openoffice', '#2980b9'),
-    'pages': ('fa-file-word', '#2e86c1'),
-    'mw': ('fa-file-word', '#2e86c1'),
-    'mcw': ('fa-file-word', '#2e86c1'),
-    'uot': ('fa-file-openoffice', '#2980b9'),
-    'uof': ('fa-file-openoffice', '#2980b9'),
-    'uos': ('fa-file-openoffice', '#2980b9'),
-    'uop': ('fa-file-powerpoint', '#dc7633'),
-    'pot': ('fa-file-powerpoint', '#dc7633'),
-    'potx': ('fa-file-powerpoint', '#dc7633'),
-    'potm': ('fa-file-powerpoint', '#dc7633'),
-    'key': ('fa-file-powerpoint', '#dc7633'),
-    'odp': ('fa-file-openoffice', '#2980b9'),
-    'odg': ('fa-file-openoffice', '#2980b9'),
-    'otp': ('fa-file-openoffice', '#2980b9'),
-    'fopd': ('fa-file-openoffice', '#2980b9'),
-    'sxi': ('fa-file-openoffice', '#2980b9'),
-    'sti': ('fa-file-openoffice', '#2980b9'),
-    'html': ('fa-file-code', '#27ae60'),
-    'htm': ('fa-file-code', '#27ae60')
-}
-
-
-def save_chat(session_id, data, new_name=None):
-    """Save or update chat data in a JSON file, with optional session renaming."""
-    # Define original and new session directory paths
-    original_session_dir = os.path.join(CHAT_DIR, session_id)
-    original_file_path = os.path.join(original_session_dir, f"{session_id}.json")
-
-    if new_name:
-        new_session_dir = os.path.join(CHAT_DIR, new_name)
-        new_file_path = os.path.join(new_session_dir, f"{new_name}.json")
-
-        # Ensure the new directory exists
-        if not os.path.exists(new_session_dir):
-            os.makedirs(new_session_dir)
-
-        # Handle renaming the file
-        if os.path.exists(original_file_path):
-            with open(original_file_path, 'r') as file:
-                content = json.load(file)
-            with open(new_file_path, 'w') as file:
-                json.dump(content, file)
-            os.remove(original_file_path)
-        else:
-            # If original file is missing, just initialize new session data
-            with open(new_file_path, 'w') as file:
-                json.dump(data, file)
-
-        # If the old directory is now empty, remove it
-        if not os.listdir(original_session_dir):
-            os.rmdir(original_session_dir)
-        elif original_session_dir != new_session_dir:
-            # If directories are different and the old is not empty, use shutil.move
-            shutil.move(original_session_dir, new_session_dir)
-    else:
-        # No renaming, just save the data
-        if not os.path.exists(original_session_dir):
-            os.makedirs(original_session_dir)
-        with open(original_file_path, 'w') as file:
-            json.dump(data, file)
-
-
-def delete_chat(session_id):
-    """ Delete chat data directory for a specific session. """
-    session_dir = os.path.join(CHAT_DIR, session_id)
-    if os.path.exists(session_dir):
-        shutil.rmtree(session_dir)
-        return True
-    else:
-        print("The directory does not exist.")
-        return False
-
-
-def load_chat(session_id):
-    """ Load chat data from a JSON file within its specific session directory. """
-    try:
-        with open(os.path.join(CHAT_DIR, session_id, f"{session_id}.json"), 'r') as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return []
-
-
-def load_all_sessions():
-    sessions = []
-    # Traverse each directory in CHAT_DIR
-    for session_dir in os.listdir(CHAT_DIR):
-        session_path = os.path.join(CHAT_DIR, session_dir)
-        if os.path.isdir(session_path):  # Make sure it's a directory
-            # Look for a JSON file in this directory
-            for file in os.listdir(session_path):
-                if file.endswith('.json'):
-                    session_id = os.path.splitext(file)[0]
-                    sessions.append(session_id)
-    return sessions
-
-
-def create_session_div(session_id):
-    """ Helper function to create a chat session div with edit, delete, and save buttons (hidden initially). """
-    return html.Div([
-        dcc.Input(id={'type': 'edit-input', 'index': session_id}, value=session_id,
-                  style={'display': 'none', 'width': '100%', 'flex': '1'}),
-        html.Button('Save', id={'type': 'save-button', 'index': session_id}, n_clicks=0,
-                    style={'display': 'none', 'margin-left': '10px'}),
-        html.Span(session_id, id={'type': 'session-name', 'index': session_id},
-                  style={'margin-right': '10px', 'flex': '1'}),
-        html.Button('Edit', id={'type': 'edit-button', 'index': session_id}, n_clicks=0,
-                    style={'margin-left': '10px'}),
-        html.Button('Delete', id={'type': 'delete-button', 'index': session_id}, n_clicks=0,
-                    style={'margin-left': '10px'}),
-    ], id={'type': 'chat-session', 'index': session_id},
-        style={
-            'padding': '10px', 'cursor': 'pointer', 'border': f'1px solid {colors["secondary"]}',
-            'margin': '5px', 'borderRadius': '5px', 'display': 'flex', 'alignItems': 'center',
-            'justifyContent': 'space-between', 'backgroundColor': '#FFF', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
-        })
-
-
-def file_icon_and_color(ext):
-    # Get the icon and color based on file extension
-    return ICON_MAP.get(ext, ('fa-file', '#566573'))
-
 
 # Define the layout of the app
 app.layout = dbc.Container([
@@ -272,11 +104,9 @@ app.layout = dbc.Container([
                     ),
                 ], style={'width': '100%', 'marginBottom': '15px'}),
 
-                html.H6('GROQ API KEY', style={'marginBottom': '10px'}),
+                html.H6('Groq api key', style={'marginBottom': '10px'}),
 
-                dcc.Textarea(
-                    id='groq-api-key',
-                    value='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',
+                dcc.Input(id='groq-api-key', value=app_settings['groq_api_key'],
                     style={'width': '100%',
                            'minHeight': '5px',
                            'overflowY': 'auto',
@@ -291,14 +121,10 @@ app.layout = dbc.Container([
                                'borderColor': '#0056b3',
                                'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
                            },
-                           'verticalAlign': 'middle', },
+                           'verticalAlign': 'middle', }),
+                html.H6('LlamaParse api key', style={'marginBottom': '10px'}),
 
-                ),
-                html.H6('LLAMAPARSE API KEY', style={'marginBottom': '10px'}),
-
-                dcc.Textarea(
-                    id='llama-parse-id',
-                    value='llx-KsMowITWRhVKq1uVChXVvDIxfg8chXIakXEtEKLdKzhqhGvZ',
+                dcc.Input(id='llama-parse-id', value=app_settings['llama_parse_key'],
                     style={'width': '100%',
                            'minHeight': '5px',
                            'overflowY': 'auto',
@@ -313,15 +139,11 @@ app.layout = dbc.Container([
                                'borderColor': '#0056b3',
                                'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
                            },
-                           'verticalAlign': 'middle', },
+                           'verticalAlign': 'middle', }),
 
-                ),
+                html.H6('Brave api key', style={'marginBottom': '10px'}),
 
-                html.H6('BRAVE API KEY', style={'marginBottom': '10px'}),
-
-                dcc.Textarea(
-                    id='brave-id',
-                    value='BSA6vLQFcC_DmOqaTk4Nm8jLF1sqTxe',
+                dcc.Input(id='brave-id', value=app_settings['brave_api_key'],
                     style={'width': '100%',
                            'minHeight': '5px',
                            'overflowY': 'auto',
@@ -336,9 +158,7 @@ app.layout = dbc.Container([
                                'borderColor': '#0056b3',
                                'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
                            },
-                           'verticalAlign': 'middle', },
-
-                ),
+                           'verticalAlign': 'middle', }),
                 html.H6('Select Model', style={'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
@@ -375,6 +195,31 @@ app.layout = dbc.Container([
         ], width={'size': 3, 'offset': 0}),
     ], style={'marginBottom': '20px'})  # Added margin between rows for better spacing
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
+
+@app.callback(
+    Output('groq-api-key', 'value'),
+    Input('groq-api-key', 'value')
+)
+def update_groq_key(new_key):
+    update_setting('groq_api_key', new_key)
+    return new_key
+
+@app.callback(
+    Output('llama-parse-id', 'value'),
+    Input('llama-parse-id', 'value')
+)
+def update_llama_key(new_key):
+    update_setting('llama_parse_key', new_key)
+    return new_key
+
+@app.callback(
+    Output('brave-id', 'value'),
+    Input('brave-id', 'value')
+)
+def update_brave_key(new_key):
+    update_setting('brave_api_key', new_key)
+    return new_key
+
 
 
 @app.callback(
@@ -641,8 +486,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         if user_input.startswith('/web'):
             print("web crawling")
             user_input = user_input.replace("/web", "")
-            '''ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens)'''
-            ai_answer = '''ai_answer['result']'''
+            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+            ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
             print("data handling")
@@ -651,17 +496,17 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path) if
                           not file_name.endswith('.json')]
 
-            ai_answer = '''\
+            ai_answer = \
                 json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
-                    'result']'''
+                    'result']
 
         elif filename:
             print("data handling")
             directory_path = f'./chat_sessions/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
-            ai_answer = '''\
+            ai_answer = \
                 json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
-                    'result']'''
+                    'result']
             filenames = filename
             file_children = [
                 html.Div([
