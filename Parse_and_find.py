@@ -47,7 +47,7 @@ async def create_vector_database(file_paths, api_key):
 
 
 # Main Function to Run Everything
-async def main(file_paths, query, model, api_key,temp, max_tokens):
+async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens):
     chat_model = ChatGroq(temperature=temp, model_name=model, api_key=api_key, max_tokens=max_tokens)
     memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
     vector_store, embed_model = await create_vector_database(file_paths, api_key)
