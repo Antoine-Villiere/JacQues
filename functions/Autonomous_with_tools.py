@@ -1,6 +1,6 @@
-from IMPORT import *
-from Scrape_and_find import scrape_and_find
-from Parse_and_find import parse_and_find
+from JacQues.functions.IMPORT import *
+from JacQues.functions.Scrape_and_find import scrape_and_find
+from JacQues.functions.Parse_and_find import parse_and_find
 
 
 def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key):

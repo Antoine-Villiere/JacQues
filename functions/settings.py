@@ -1,4 +1,4 @@
-from IMPORT import json
+from JacQues.functions.IMPORT import json
 
 
 def update_setting(key, value):
@@ -8,13 +8,13 @@ def update_setting(key, value):
 
 
 def save_settings(settings):
-    with open('app_settings.json', 'w') as f:
+    with open('./assets/app_settings.json', 'w') as f:
         json.dump(settings, f)
 
 
 def load_settings():
     try:
-        with open('app_settings.json', 'r') as f:
+        with open('./assets/app_settings.json', 'r') as f:
             return json.load(f)
     except FileNotFoundError:
         # Return default settings if no settings file exists

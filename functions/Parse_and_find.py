@@ -1,4 +1,4 @@
-from IMPORT import *
+from JacQues.functions.IMPORT import *
 from langchain.chains import RetrievalQA
 from langchain.memory import ConversationBufferMemory
 

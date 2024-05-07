@@ -1,5 +1,5 @@
-from config import *
-from IMPORT import os, json, shutil, dcc, html
+from JacQues.functions.config import *
+from JacQues.functions.IMPORT import os, json, shutil, dcc, html
 
 
 def save_chat(session_id, data, new_name=None):

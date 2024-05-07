@@ -1,4 +1,4 @@
-CHAT_DIR = 'chat_sessions'
+CHAT_DIR = './chat_sessions'
 
 # Define a consistent color scheme
 colors = {

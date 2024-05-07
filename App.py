@@ -1,10 +1,10 @@
-from IMPORT import *
-from Scrape_and_find import scrape_and_find
-from Parse_and_find import parse_and_find
-from Autonomous_with_tools import get_auto_assitant
-from chat_management import *
-from config import *
-from settings import *
+from JacQues.functions.IMPORT import *
+from JacQues.functions.Scrape_and_find import scrape_and_find
+from JacQues.functions.Parse_and_find import parse_and_find
+from JacQues.functions.Autonomous_with_tools import get_auto_assitant
+from JacQues.functions.chat_management import *
+from JacQues.functions.config import *
+from JacQues.functions.settings import *
 
 session_id_global = None
 new_chat = None
@@ -13,7 +13,7 @@ if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 
 # Path to the file
-file_path = r'./assets/prompt'
+file_path = 'assets/prompt'
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
 
@@ -33,7 +33,7 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '90%', 'overflowY': 'scroll'}),
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '90%', 'overflowY': 'scroll'},className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
 
         ], width={'size': 3, 'offset': 0}, style={'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '10px',
@@ -41,13 +41,13 @@ app.layout = dbc.Container([
 
         dbc.Col([
             html.Div([
-                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '82%', 'overflowY': 'scroll'}),
+                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '82%', 'overflowY': 'scroll'},className='hide-scrollbar'),
                 html.Div([
                     dcc.Textarea(id='user-input', placeholder='Message Jacques... Or type "/" for commands...',
                                  spellCheck=True,
                                  style={'marginBottom': '0px', 'width': '95%', 'overflowY': 'scroll',
                                         'borderRadius': '5px', 'color': '#6c757d',
-                                        'background-color': 'transparent', 'border': 'none'}),
+                                        'background-color': 'transparent', 'border': 'none'},className='hide-scrollbar'),
                     html.Button('\u21E7', id='send-button', n_clicks=0, style={
                         'width': '5%',
                         'backgroundColor': colors['primary'],
@@ -166,7 +166,7 @@ app.layout = dbc.Container([
                         {'label': 'llama3', 'value': 'llama3-70b-8192'},
                         {'label': 'Mixtral 8x7b', 'value': 'mixtral-8x7b-32768'}
                     ],
-                    value='mixtral-8x7b-32768',
+                    value='llama3-70b-8192',
                     style={'marginBottom': '15px'}
                 ),
                 dcc.Textarea(
@@ -185,9 +185,10 @@ app.layout = dbc.Container([
                                'borderColor': '#0056b3',
                                'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
                            },
-                           'verticalAlign': 'middle', },
+                           'verticalAlign': 'middle', },className='hide-scrollbar'
 
                 ),
+
             ], style={
                 'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
                 'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
