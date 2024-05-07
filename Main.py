@@ -1,13 +1,13 @@
 from IMPORT import *
 from Scrape_and_find import scrape_and_find
-from Parse_and_find import main
+from Parse_and_find import parse_and_find
+from Autonomous_with_tools import get_auto_assitant
 from chat_management import *
 from config import *
 from settings import *
 
 session_id_global = None
 new_chat = None
-
 
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
@@ -107,58 +107,58 @@ app.layout = dbc.Container([
                 html.H6('Groq api key', style={'marginBottom': '10px'}),
 
                 dcc.Input(id='groq-api-key', value=app_settings['groq_api_key'],
-                    style={'width': '100%',
-                           'minHeight': '5px',
-                           'overflowY': 'auto',
-                           'borderRadius': '10px',
-                           'border': f'1px solid {colors["secondary"]}',
-                           'marginBottom': '15px',
-                           'font-size': '12px',
-                           'padding': '5px',
-                           'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                           'outline': 'none',
-                           ':focus': {
-                               'borderColor': '#0056b3',
-                               'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                           },
-                           'verticalAlign': 'middle', }),
+                          style={'width': '100%',
+                                 'minHeight': '5px',
+                                 'overflowY': 'auto',
+                                 'borderRadius': '10px',
+                                 'border': f'1px solid {colors["secondary"]}',
+                                 'marginBottom': '15px',
+                                 'font-size': '12px',
+                                 'padding': '5px',
+                                 'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                 'outline': 'none',
+                                 ':focus': {
+                                     'borderColor': '#0056b3',
+                                     'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                 },
+                                 'verticalAlign': 'middle', }),
                 html.H6('LlamaParse api key', style={'marginBottom': '10px'}),
 
                 dcc.Input(id='llama-parse-id', value=app_settings['llama_parse_key'],
-                    style={'width': '100%',
-                           'minHeight': '5px',
-                           'overflowY': 'auto',
-                           'borderRadius': '10px',
-                           'border': f'1px solid {colors["secondary"]}',
-                           'marginBottom': '15px',
-                           'font-size': '12px',
-                           'padding': '5px',
-                           'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                           'outline': 'none',
-                           ':focus': {
-                               'borderColor': '#0056b3',
-                               'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                           },
-                           'verticalAlign': 'middle', }),
+                          style={'width': '100%',
+                                 'minHeight': '5px',
+                                 'overflowY': 'auto',
+                                 'borderRadius': '10px',
+                                 'border': f'1px solid {colors["secondary"]}',
+                                 'marginBottom': '15px',
+                                 'font-size': '12px',
+                                 'padding': '5px',
+                                 'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                 'outline': 'none',
+                                 ':focus': {
+                                     'borderColor': '#0056b3',
+                                     'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                 },
+                                 'verticalAlign': 'middle', }),
 
                 html.H6('Brave api key', style={'marginBottom': '10px'}),
 
                 dcc.Input(id='brave-id', value=app_settings['brave_api_key'],
-                    style={'width': '100%',
-                           'minHeight': '5px',
-                           'overflowY': 'auto',
-                           'borderRadius': '10px',
-                           'border': f'1px solid {colors["secondary"]}',
-                           'marginBottom': '15px',
-                           'font-size': '12px',
-                           'padding': '5px',
-                           'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                           'outline': 'none',
-                           ':focus': {
-                               'borderColor': '#0056b3',
-                               'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                           },
-                           'verticalAlign': 'middle', }),
+                          style={'width': '100%',
+                                 'minHeight': '5px',
+                                 'overflowY': 'auto',
+                                 'borderRadius': '10px',
+                                 'border': f'1px solid {colors["secondary"]}',
+                                 'marginBottom': '15px',
+                                 'font-size': '12px',
+                                 'padding': '5px',
+                                 'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                 'outline': 'none',
+                                 ':focus': {
+                                     'borderColor': '#0056b3',
+                                     'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                 },
+                                 'verticalAlign': 'middle', }),
                 html.H6('Select Model', style={'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
@@ -196,6 +196,7 @@ app.layout = dbc.Container([
     ], style={'marginBottom': '20px'})  # Added margin between rows for better spacing
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
 
+
 @app.callback(
     Output('groq-api-key', 'value'),
     Input('groq-api-key', 'value')
@@ -203,6 +204,7 @@ app.layout = dbc.Container([
 def update_groq_key(new_key):
     update_setting('groq_api_key', new_key)
     return new_key
+
 
 @app.callback(
     Output('llama-parse-id', 'value'),
@@ -212,6 +214,7 @@ def update_llama_key(new_key):
     update_setting('llama_parse_key', new_key)
     return new_key
 
+
 @app.callback(
     Output('brave-id', 'value'),
     Input('brave-id', 'value')
@@ -219,7 +222,6 @@ def update_llama_key(new_key):
 def update_brave_key(new_key):
     update_setting('brave_api_key', new_key)
     return new_key
-
 
 
 @app.callback(
@@ -286,6 +288,7 @@ def update_file_preview(contents, delete_clicks, send, filenames, stored_filenam
                                                                           'marginTop': '0px',
                                                                           'marginBottom': '0px'}), stored_filenames
 
+
 @app.callback(
     Output('file-display-area', 'children'),
     [Input({'type': 'chat-session', 'index': ALL}, 'n_clicks')],
@@ -319,6 +322,7 @@ def display_session_files(n_clicks, ids):
     # Return a single horizontal row container
     return html.Div(children, className='d-flex align-items-center', style={'whiteSpace': 'nowrap',
                                                                             'marginTop': '0px', 'marginBottom': '0px'})
+
 
 def generate_file_preview(filenames):
     # Utility function to generate HTML for file previews
@@ -497,7 +501,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
                           not file_name.endswith('.json')]
 
             ai_answer = \
-                json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                json.loads(asyncio.run(
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
                     'result']
 
         elif filename:
@@ -505,7 +510,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             directory_path = f'./chat_sessions/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
-                json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                json.loads(asyncio.run(
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
                     'result']
             filenames = filename
             file_children = [
@@ -522,6 +528,14 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
                                      style={'overflowX': 'auto', 'whiteSpace': 'nowrap',
                                             'marginTop': '0px', 'marginBottom': '0px'})
 
+        else:
+            directory_path = f'./chat_sessions/{session_id}'
+            try:
+                file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
+            except:
+                file_paths=[]
+            ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                          file_paths, llama_parse_id)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
