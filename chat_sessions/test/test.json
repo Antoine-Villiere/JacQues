@@ -1,1 +1,0 @@
-{"messages": [{"role": "system", "content": "Welcome! How can I assist you today?"}, {"role": "user", "content": "effde"}, {"role": "system", "content": "                json.loads(asyncio.run(main(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[\n                    'result']"}]}
