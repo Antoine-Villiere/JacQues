@@ -2,6 +2,7 @@ from functions.IMPORT import *
 import aiohttp
 from bs4 import BeautifulSoup
 
+
 async def fetch_page_content(session, url, timeout=800):
     try:
         async with session.get(url, timeout=timeout) as response:
@@ -22,12 +23,15 @@ async def clean_and_extract_content(html):
     return ' '.join(soup.stripped_strings)
 
 
-async def fetch_search_results(session, brave_id,query, results_count=3):
-    url = f'https://api.search.brave.com/res/v1/web/search?q={query}&count={results_count}'
+async def fetch_search_results(session, brave_id, query, results_count=10):
+    url = f'https://api.search.brave.com/res/v1/web/search?q={query}&count={results_count}&country=fr'
     headers = {
         'Accept': 'application/json',
         'Accept-Encoding': 'gzip',
-        'X-Subscription-Token': brave_id}
+        'X-Subscription-Token': brave_id,
+        'X-Loc-Country': 'fr',
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 13; Pixel 7 Pro) AppleWebKit/537.36 (KHTML, like Gecko) '
+                      'Chrome/108.0.0.0 Mobile Safari/537.36'}
     async with session.get(url, headers=headers) as response:
         response.raise_for_status()
         json_response = await response.json()
@@ -48,9 +52,9 @@ async def fetch_and_process_links(session, sources):
     return contents
 
 
-async def create_vector_database(contents):
+async def create_vector_database(contents,session_id):
     os.makedirs("./data/data_web", exist_ok=True)
-    markdown_path = './data/data_web/output.md'
+    markdown_path = f'./chat_sessions/{session_id}/data_web/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for content in contents:
             if content['html']:
@@ -64,19 +68,21 @@ async def create_vector_database(contents):
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
     chunks = text_splitter.split_documents(docs)
     embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
-    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model, persist_directory="./chroma/chroma_db_2",
+    vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model,
+                                         persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
                                          collection_name="rag")
     return vector_store, embed_model
 
 
-async def process_query(query,brave_id):
+async def process_query(query, brave_id,session_id):
     async with aiohttp.ClientSession() as session:
         print("Fetch sources...")
-        sources = await fetch_search_results(session,brave_id, query)
+        sources = await fetch_search_results(session, brave_id, f'${query}$')
         print("Get information...")
         contents = await fetch_and_process_links(session, sources)
         print("Check coherence...")
         vector_store, embed_model = await create_vector_database(contents)
-        vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma/chroma_db_2", collection_name="rag")
+        vector_store = Chroma(embedding_function=embed_model, persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
+                              collection_name="rag")
         retriever = vector_store.as_retriever(search_kwargs={'k': 3})
         return retriever
