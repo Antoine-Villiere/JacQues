@@ -1,5 +1,5 @@
-from JacQues.functions.IMPORT import *
-from JacQues.functions.web_scraper import process_query
+from functions.IMPORT import *
+from functions.web_scraper import process_query
 from langchain.chains import RetrievalQA
 
 def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens):

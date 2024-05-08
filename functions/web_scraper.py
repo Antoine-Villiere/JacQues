@@ -1,4 +1,4 @@
-from JacQues.functions.IMPORT import *
+from functions.IMPORT import *
 import aiohttp
 from bs4 import BeautifulSoup
 
@@ -50,7 +50,7 @@ async def fetch_and_process_links(session, sources):
 
 async def create_vector_database(contents):
     os.makedirs("./data/data_web", exist_ok=True)
-    markdown_path = '../data/data_web/output.md'
+    markdown_path = './data/data_web/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for content in contents:
             if content['html']:

@@ -1,6 +1,6 @@
-from JacQues.functions.IMPORT import *
-from JacQues.functions.Scrape_and_find import scrape_and_find
-from JacQues.functions.Parse_and_find import parse_and_find
+from functions.IMPORT import *
+from functions.Scrape_and_find import scrape_and_find
+from functions.Parse_and_find import parse_and_find
 
 
 def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key):
@@ -93,39 +93,16 @@ def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, 
         max_tokens=max_tokens
     )
     response_message = response.choices[0].message
-    print(response_message.content)
-    tool_calls = response_message.tool_calls
-    print(tool_calls)
-    # Step 2: check if the model wanted to call a function
-    if tool_calls:
-        # Step 3: call the function
-        # Note: the JSON response may not always be valid; be sure to handle errors
-        available_functions = {
-            "scrape_and_find": scrape_and_find,
-            "parse_and_find": parse_and_find
-        }  # only one function in this example, but you can have multiple
-        messages.append(response_message.content)  # extend conversation with assistant's reply
-        # Step 4: send the info for each function call and function response to the model
-        for tool_call in tool_calls:
-            function_name = tool_call.function.name
-            function_to_call = available_functions[function_name]
-            function_args = json.loads(tool_call.function.arguments)
-            print(function_to_call, function_args)
-            breakpoint()
-            function_response = function_to_call(
-                team_name=function_args.get("query")
-            )
-            messages.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": function_name,
-                    "content": function_response,
-                }
-            )  # extend conversation with function response
-        second_response = client.chat.completions.create(
-            model=model_dropdown,
-            messages=messages
-        )  # get a new response from the model where it can see the function response
-        return second_response.choices[0].message.content
+    print(response_message)
+    if response_message.content is None:
+        tool_calls = response_message.tool_calls[0].function.name
+        query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
+        print(tool_calls, query)
+        # Step 2: check if the model wanted to call a function
+        if tool_calls:
+            ai_answer = ''
+            if tool_calls == "scrape_and_find":
+                print("scrape_and_find")
+                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+            return ai_answer
     return response_message.content

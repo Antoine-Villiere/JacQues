@@ -1,10 +1,10 @@
-from JacQues.functions.IMPORT import *
-from JacQues.functions.Scrape_and_find import scrape_and_find
-from JacQues.functions.Parse_and_find import parse_and_find
-from JacQues.functions.Autonomous_with_tools import get_auto_assitant
-from JacQues.functions.chat_management import *
-from JacQues.functions.config import *
-from JacQues.functions.settings import *
+from functions.IMPORT import *
+from functions.Scrape_and_find import scrape_and_find
+from functions.Parse_and_find import parse_and_find
+from functions.Autonomous_with_tools import get_auto_assitant
+from functions.chat_management import *
+from functions.config import *
+from functions.settings import *
 
 session_id_global = None
 new_chat = None
@@ -33,21 +33,34 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '90%', 'overflowY': 'scroll'},className='hide-scrollbar'),
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '90%', 'overflowY': 'scroll'},
+                     className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
+            html.Button("Hidde settings", id='toggle-button', n_clicks=0, style={
+                'width': '30%',
+                'right': '10px',
+                'backgroundColor': colors['primary'],
+                'color': 'white',
+                'borderRadius': '5px',
+                'border': 'none',
+                'marginBottom': '10px'
+            }),
+            html.Div(id='toggle-state', children='show', style={'display': 'none'}),
 
         ], width={'size': 3, 'offset': 0}, style={'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '10px',
                                                   'border': f'1px solid {colors["secondary"]}', 'height': '95vh'}),
 
-        dbc.Col([
+        dbc.Col(id='chat-column', children=[
             html.Div([
-                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '82%', 'overflowY': 'scroll'},className='hide-scrollbar'),
+                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '82%', 'overflowY': 'scroll'},
+                         className='hide-scrollbar'),
                 html.Div([
                     dcc.Textarea(id='user-input', placeholder='Message Jacques... Or type "/" for commands...',
                                  spellCheck=True,
                                  style={'marginBottom': '0px', 'width': '95%', 'overflowY': 'scroll',
                                         'borderRadius': '5px', 'color': '#6c757d',
-                                        'background-color': 'transparent', 'border': 'none'},className='hide-scrollbar'),
+                                        'background-color': 'transparent', 'border': 'none'},
+                                 className='hide-scrollbar'),
                     html.Button('\u21E7', id='send-button', n_clicks=0, style={
                         'width': '5%',
                         'backgroundColor': colors['primary'],
@@ -72,12 +85,14 @@ app.layout = dbc.Container([
                 ),
                 dcc.Store(id='stored-filenames', data=[]),
                 dcc.Store(id='session-id'),
+
             ], style={'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '10px',
                       'border': f'1px solid {colors["secondary"]}', 'height': '95vh'})
         ], width={'size': 6, 'offset': 0}),
 
-        dbc.Col([
+        dbc.Col(id='settings-column', children=[
             html.Div([
+
                 html.H4('Settings', style={'marginBottom': '20px'}),
                 html.H6('Degree of creativity', style={'marginBottom': '10px'}),
                 html.Div([
@@ -185,17 +200,34 @@ app.layout = dbc.Container([
                                'borderColor': '#0056b3',
                                'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
                            },
-                           'verticalAlign': 'middle', },className='hide-scrollbar'
+                           'verticalAlign': 'middle', 'display': 'none'}, className='hide-scrollbar'
 
                 ),
 
-            ], style={
-                'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
-                'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
-            })
-        ], width={'size': 3, 'offset': 0}),
+            ])], style={
+            'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
+            'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+        }, width={'size': 3, 'offset': 0}),
     ], style={'marginBottom': '20px'})  # Added margin between rows for better spacing
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
+
+
+@app.callback(
+    [Output('settings-column', 'style'),
+     Output('chat-column', 'width'),
+     Output('toggle-button', 'children')],
+    Input('toggle-button', 'n_clicks'),
+    Input('toggle-state', 'children')
+)
+def toggle_visibility(n_clicks, toggle_state):
+    # Switch the visibility state
+    if n_clicks % 2 == 0:
+        return {
+            'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
+            'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+        }, {'size': 6, 'offset': 0}, "Hidde settings"
+    else:
+        return {'display': 'none'}, {'size': 9, 'offset': 0}, "Show settings"
 
 
 @app.callback(
@@ -368,8 +400,8 @@ def display_command_options(input_value):
     prevent_initial_call=True
 )
 def new_chat_session(n_clicks):
-    global new_chat
-    if n_clicks > 0 and new_chat is not None:
+    global new_chat, session_id_global
+    if n_clicks > 0 and new_chat is not None or session_id_global is None:
         new_session_id = str(uuid.uuid4())
         save_chat(new_session_id, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
         new_chat = None
@@ -534,7 +566,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             try:
                 file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             except:
-                file_paths=[]
+                file_paths = []
             ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
                                           file_paths, llama_parse_id)
         # Append user message to chat data
@@ -553,6 +585,12 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         new_chat = 1
 
     # Fetch messages for the current or selected session
+    if not session_id:
+        new_session_id = str(uuid.uuid4())
+        save_chat(new_session_id,
+                  {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
+        session_id = new_session_id
+        new_chat = 1
     chat_data = load_chat(session_id)
     chat_history_elements = []
     if 'messages' not in chat_data:
@@ -562,11 +600,11 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             profile_pic = user_profile_pic
             style = {'textAlign': 'left',
                      'padding': '10px',
-                     'borderRadius': '10px', 'marginBottom': '10px', 'maxWidth': '70%'}
+                     'borderRadius': '10px', 'marginBottom': '10px', 'maxWidth': '100%'}
         else:
             profile_pic = ai_profile_pic
             style = {'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px',
-                     'borderRadius': '10px', 'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '70%'}
+                     'borderRadius': '10px', 'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}
         chat_bubble = html.Div([
             html.Img(src=profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
             html.Span(msg['content'], style={'marginLeft': '10px'})
