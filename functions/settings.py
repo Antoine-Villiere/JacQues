@@ -1,4 +1,4 @@
-from JacQues.functions.IMPORT import json
+from functions.IMPORT import json
 
 
 def update_setting(key, value):
