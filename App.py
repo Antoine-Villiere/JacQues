@@ -337,7 +337,9 @@ def display_session_files(n_clicks, ids):
     session_id = json.loads(button_id.split('.')[0])['index']
     session_dir = os.path.join(CHAT_DIR, session_id)
     try:
-        file_names = [file for file in os.listdir(session_dir) if not file.endswith('.json')]
+        file_names = [file for file in os.listdir(session_dir)
+                      if not file.endswith('.json') and os.path.isfile(os.path.join(session_dir, file))]
+
     except FileNotFoundError:
         return html.Div("")
 
@@ -535,7 +537,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
 
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id, groq_api_key)))[
                     'result']
 
         elif filename:
@@ -544,7 +546,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id, groq_api_key)))[
                     'result']
             filenames = filename
             file_children = [

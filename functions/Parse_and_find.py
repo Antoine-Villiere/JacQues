@@ -47,8 +47,8 @@ async def create_vector_database(file_paths, api_key,session_id):
 
 
 # Main Function to Run Everything
-async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens, session_id):
-    chat_model = ChatGroq(temperature=temp, model_name=model, api_key=api_key, max_tokens=max_tokens)
+async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens, session_id, groq_api):
+    chat_model = ChatGroq(temperature=temp, model_name=model, api_key=groq_api, max_tokens=max_tokens)
     memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
     vector_store, embed_model = await create_vector_database(file_paths, api_key, session_id)
     vector_store = Chroma(embedding_function=embed_model, persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db', collection_name="rag")
