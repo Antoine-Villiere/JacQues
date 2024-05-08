@@ -3,7 +3,7 @@ from functions.Scrape_and_find import scrape_and_find
 from functions.Parse_and_find import parse_and_find
 
 
-def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key):
+def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,session_id):
     print(user_query)
 
     # Step 1: send the conversation and available functions to the model
@@ -103,6 +103,6 @@ def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, 
             ai_answer = ''
             if tool_calls == "scrape_and_find":
                 print("scrape_and_find")
-                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,session_id)
             return ai_answer
     return response_message.content

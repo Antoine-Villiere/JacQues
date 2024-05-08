@@ -523,7 +523,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         if user_input.startswith('/web'):
             print("web crawling")
             user_input = user_input.replace("/web", "")
-            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens, session_id)
             ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
@@ -535,7 +535,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
 
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id)))[
                     'result']
 
         elif filename:
@@ -544,7 +544,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id)))[
                     'result']
             filenames = filename
             file_children = [
@@ -568,7 +568,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             except:
                 file_paths = []
             ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                          file_paths, llama_parse_id)
+                                          file_paths, llama_parse_id, session_id)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
@@ -621,4 +621,4 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
 
 # Run the app
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(debug=False)

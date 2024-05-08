@@ -5,11 +5,11 @@ from langchain.memory import ConversationBufferMemory
 nest_asyncio.apply()
 
 
-async def load_or_parse_data(file_paths, api_key):
+async def load_or_parse_data(file_paths, api_key,session_id):
     parsed_data = []
     for file_path in file_paths:
-        data_file = f"./data/data_parse/parsed_data_{os.path.basename(file_path)}.pkl"
-        os.makedirs("./data/data_parse", exist_ok=True)
+        data_file = f"./chat_sessions/{session_id}/data_parse/parsed_data_{os.path.basename(file_path)}.pkl"
+        os.makedirs(f"./chat_sessions/{session_id}/data_parse", exist_ok=True)
 
         if os.path.exists(data_file):
             parsed_data.append(joblib.load(data_file))
@@ -24,9 +24,9 @@ async def load_or_parse_data(file_paths, api_key):
     return parsed_data
 
 
-async def create_vector_database(file_paths, api_key):
-    documents = await load_or_parse_data(file_paths, api_key)
-    markdown_path = './data/data_parse/output.md'
+async def create_vector_database(file_paths, api_key,session_id):
+    documents = await load_or_parse_data(file_paths, api_key,session_id)
+    markdown_path = f'./chat_sessions/{session_id}/data_parse/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for data in documents:
             for doc in data:
@@ -41,23 +41,24 @@ async def create_vector_database(file_paths, api_key):
     chunks = text_splitter.split_documents(docs)
     embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
     vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model,
-                                         persist_directory="./chroma/chroma_db",
+                                         persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db',
                                          collection_name="rag")
     return vector_store, embed_model
 
 
 # Main Function to Run Everything
-async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens):
+async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens, session_id):
     chat_model = ChatGroq(temperature=temp, model_name=model, api_key=api_key, max_tokens=max_tokens)
     memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
-    vector_store, embed_model = await create_vector_database(file_paths, api_key)
-    vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma/chroma_db", collection_name="rag")
+    vector_store, embed_model = await create_vector_database(file_paths, api_key, session_id)
+    vector_store = Chroma(embedding_function=embed_model, persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db', collection_name="rag")
     retriever = vector_store.as_retriever(search_kwargs={'k': 3})
     prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
                                                 Context: {context} 
 
                                                 Question: {question}
                                                 Only return the helpful answer below and nothing else.
+                                                Do not give any information about procedures and service features that are not mentioned in the PROVIDED CONTEXT.
                                                 Helpful answer:""",
                                      input_variables=['context', 'chat_history', 'question'])
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever, memory=memory,
