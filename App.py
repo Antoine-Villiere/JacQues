@@ -36,15 +36,29 @@ app.layout = dbc.Container([
                      style={'marginTop': '10px', 'marginBottom': '10px', 'height': '80vh', 'overflowY': 'scroll'},
                      className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
-            html.Button("Hidde settings", id='toggle-button', n_clicks=0, style={
-                'width': '30%',
-                'right': '10px',
-                'backgroundColor': colors['primary'],
-                'color': 'white',
-                'borderRadius': '5px',
-                'border': 'none',
-                'marginBottom': '10px'
-            }),
+            dbc.Row([
+                html.Button(["Hide settings", html.I(className='fa fa-eye-slash')], id='toggle-button', n_clicks=0,
+                            style={
+                                'width': '40%',
+                                'right': '10px',
+                                'backgroundColor': colors['primary'],
+                                'color': 'white',
+                                'borderRadius': '5px',
+                                'border': 'none',
+                                'marginBottom': '10px',
+                                'marginRight': '80px'
+                            }),
+                html.Button(["Remind me ", html.I(className='fa fa-clock')], id='toggle-button-reminder', n_clicks=0,
+                            style={
+                                'width': '40%',
+                                'right': '10px',
+                                'backgroundColor': "#ca6702",
+                                'color': 'white',
+                                'borderRadius': '5px',
+                                'border': 'none',
+                                'marginBottom': '10px'
+                            })
+            ]),
             html.Div(id='toggle-state', children='show', style={'display': 'none'}),
 
         ], width={'size': 3, 'offset': 0}, style={'backgroundColor': 'white', 'padding': '20px', 'borderRadius': '10px',
@@ -225,9 +239,9 @@ def toggle_visibility(n_clicks, toggle_state):
         return {
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
             'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
-        }, {'size': 6, 'offset': 0}, "Hidde settings"
+        }, {'size': 6, 'offset': 0}, ["Hide settings ", html.I(className='fa fa-eye-slash')]
     else:
-        return {'display': 'none'}, {'size': 9, 'offset': 0}, "Show settings"
+        return {'display': 'none'}, {'size': 9, 'offset': 0}, ["Show settings ", html.I(className='fa fa-eye')]
 
 
 @app.callback(
@@ -337,7 +351,9 @@ def display_session_files(n_clicks, ids):
     session_id = json.loads(button_id.split('.')[0])['index']
     session_dir = os.path.join(CHAT_DIR, session_id)
     try:
-        file_names = [file for file in os.listdir(session_dir) if not file.endswith('.json')]
+        file_names = [file for file in os.listdir(session_dir)
+                      if not file.endswith('.json') and os.path.isfile(os.path.join(session_dir, file))]
+
     except FileNotFoundError:
         return html.Div("")
 
@@ -523,7 +539,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         if user_input.startswith('/web'):
             print("web crawling")
             user_input = user_input.replace("/web", "")
-            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens)
+            ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                        session_id)
             ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
@@ -535,7 +552,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
 
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id,
+                                   groq_api_key)))[
                     'result']
 
         elif filename:
@@ -544,7 +562,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id,
+                                   groq_api_key)))[
                     'result']
             filenames = filename
             file_children = [
@@ -569,7 +588,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             except:
                 file_paths = []
             ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                          file_paths, llama_parse_id)
+                                          file_paths, llama_parse_id, session_id)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
