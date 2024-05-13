@@ -2,7 +2,8 @@ from functions.IMPORT import *
 from functions.web_scraper import process_query
 from langchain.chains import RetrievalQA
 
-def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens):
+
+def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,session_id):
     print("Initialization...")
     client = Groq(api_key=groq_api_key)
     chat_completion = client.chat.completions.create(
@@ -32,13 +33,13 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
     )
 
     questions = json.loads(chat_completion.choices[0].message.content)
-    retriever = asyncio.run(process_query(questions['followUp'][0], brave_id))
+    retriever = asyncio.run(process_query(questions['followUp'][0], brave_id,session_id))
     prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
                                                             Context: {context} 
 
                                                             Question: {question}
                                                             Only return the helpful answer below and nothing else. 
-                                                            If, based on the provided context, you cannot explicitly give the answer, you MUST reply "N/A".
+                                                            Do not give any information about procedures and service features that are not mentioned in the PROVIDED CONTEXT.
                                                             Helpful answer:""",
                                      input_variables=['context', 'question'])
 
