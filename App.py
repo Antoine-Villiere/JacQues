@@ -33,7 +33,7 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '80vh', 'overflowY': 'scroll'},
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '79vh', 'overflowY': 'scroll'},
                      className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
             dbc.Row([
@@ -217,6 +217,131 @@ app.layout = dbc.Container([
                            'verticalAlign': 'middle', 'display': 'none'}, className='hide-scrollbar'
 
                 ),
+                html.H6('Select Personality', style={'marginBottom': '10px'}),
+
+                html.Div(
+                    style={'display': 'flex', 'flexWrap': 'wrap', 'gap': '30px', 'justifyContent': 'space-between'},
+                    children=[
+                        html.Button(
+                            [
+                                html.H4('Tech Innovator', id='tech-innovator-title', className='card-title'),
+                                html.P('Pioneer in cutting-edge technology and innovation.',
+                                       id='tech-innovator-desc',
+                                       className='card-text'),
+                                dbc.Tooltip(
+                                    "Expert in emerging technologies, R&D, and innovative solutions.",
+                                    target='tech-innovator-desc',
+                                    placement='top'
+                                )
+                            ],
+                            id="tech-innovator-card",
+                            style={
+                                'flex': '1 1 calc(50% - 15px)',
+                                'cursor': 'pointer',
+                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                'outline': 'none',
+                                'backgroundColor': 'white',
+                                ':focus': {
+                                    'borderColor': '#0056b3',
+                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                },
+                                'borderRadius': '10px',
+                                'border': f'1px solid {colors["secondary"]}'
+                            },
+                            n_clicks=0
+
+                        ),
+                        html.Button(
+                            [
+                                html.H4('Market Strategist', id='market-strategist-title',
+                                        className='card-title'),
+                                html.P('Master of market analysis and strategic planning.',
+                                       id='market-strategist-desc',
+                                       className='card-text'),
+                                dbc.Tooltip(
+                                    "Specialist in market trends, competitive analysis, and business strategy.",
+                                    target='market-strategist-desc',
+                                    placement='top'
+                                )
+                            ],
+                            id="market-strategist-card",
+                            style={
+                                'flex': '1 1 calc(50% - 15px)',
+                                'cursor': 'pointer',
+                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                'outline': 'none',
+                                'backgroundColor': 'white',
+                                ':focus': {
+                                    'borderColor': '#0056b3',
+                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                },
+                                'borderRadius': '10px',
+                                'border': f'1px solid {colors["secondary"]}'
+                            },
+                            n_clicks=0
+                        ),
+
+                        html.Button(
+                            [
+                                html.H4('Productivity Guru', id='productivity-guru-title',
+                                        className='card-title'),
+                                html.P('Expert in optimizing tasks and enhancing efficiency.',
+                                       id='productivity-guru-desc',
+                                       className='card-text'),
+                                dbc.Tooltip(
+                                    "Skilled in time management, organization, and productivity tools.",
+                                    target='productivity-guru-desc',
+                                    placement='top'
+                                )
+                            ],
+                            id="productivity-guru-card",
+                            style={
+                                'flex': '1 1 calc(50% - 15px)',
+                                'cursor': 'pointer',
+                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                'outline': 'none',
+                                'backgroundColor': 'white',
+                                ':focus': {
+                                    'borderColor': '#0056b3',
+                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                },
+                                'borderRadius': '10px',
+                                'border': f'1px solid {colors["secondary"]}'
+                            },
+                            n_clicks=0
+                        ),
+
+                        html.Button(
+                            [
+                                html.H4('Creative Visionary', id='creative-visionary-title',
+                                        className='card-title'),
+                                html.P('Champion of creativity and innovative content.',
+                                       id='creative-visionary-desc',
+                                       className='card-text'),
+                                dbc.Tooltip(
+                                    "Passionate about creative projects, content creation, and artistic expression.",
+                                    target='creative-visionary-desc',
+                                    placement='top'
+                                )
+                            ],
+                            id="creative-visionary-card",
+                            style={
+                                'flex': '1 1 calc(50% - 15px)',
+                                'cursor': 'pointer',
+                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                'outline': 'none',
+                                'backgroundColor': 'white',
+                                ':focus': {
+                                    'borderColor': '#0056b3',
+                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                },
+                                'borderRadius': '10px',
+                                'border': f'1px solid {colors["secondary"]}'
+                            },
+                            n_clicks=0
+                        ),
+                    ]
+                )
 
             ])], style={
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
@@ -224,6 +349,30 @@ app.layout = dbc.Container([
         }, width={'size': 3, 'offset': 0}),
     ], style={'marginBottom': '20px'})  # Added margin between rows for better spacing
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
+
+
+# Define the callback
+@app.callback(
+    Output('output-personality', 'children'),
+    [Input('tech-innovator-card', 'n_clicks'),
+     Input('market-strategist-card', 'n_clicks'),
+     Input('productivity-guru-card', 'n_clicks'),
+     Input('creative-visionary-card', 'n_clicks')]
+)
+def update_output(tech_clicks, market_clicks, productivity_clicks, creative_clicks):
+    changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
+    print(changed_id)
+    breakpoint()
+    if 'tech-innovator-card' in changed_id:
+        return "Tech Innovator personality selected."
+    elif 'market-strategist-card' in changed_id:
+        return "Market Strategist personality selected."
+    elif 'productivity-guru-card' in changed_id:
+        return "Productivity Guru personality selected."
+    elif 'creative-visionary-card' in changed_id:
+        return "Creative Visionary personality selected."
+    else:
+        return "Select a personality."
 
 
 @app.callback(
