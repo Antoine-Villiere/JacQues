@@ -47,19 +47,24 @@ async def create_vector_database(file_paths, api_key):
 
 
 # Main Function to Run Everything
-async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens):
-    chat_model = ChatGroq(temperature=temp, model_name=model, api_key=api_key, max_tokens=max_tokens)
-    memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
+async def parse_and_find(file_paths, query, model, api_key,temp, max_tokens, ai=True):
+
     vector_store, embed_model = await create_vector_database(file_paths, api_key)
     vector_store = Chroma(embedding_function=embed_model, persist_directory="./chroma/chroma_db", collection_name="rag")
     retriever = vector_store.as_retriever(search_kwargs={'k': 3})
-    prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
-                                                Context: {context} 
 
-                                                Question: {question}
-                                                Only return the helpful answer below and nothing else.
-                                                Helpful answer:""",
-                                     input_variables=['context', 'chat_history', 'question'])
-    qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever, memory=memory,
-                                           return_source_documents=True, chain_type_kwargs={"prompt": prompt_template})
-    return await asyncio.to_thread(qa_chain.invoke, {"query": query})
+    if ai:
+        chat_model = ChatGroq(temperature=temp, model_name=model, api_key=api_key, max_tokens=max_tokens)
+        memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
+        prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question. 
+                                                    Context: {context} 
+    
+                                                    Question: {question}
+                                                    Only return the helpful answer below and nothing else.
+                                                    Helpful answer:""",
+                                         input_variables=['context', 'chat_history', 'question'])
+        qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever, memory=memory,
+                                               return_source_documents=True, chain_type_kwargs={"prompt": prompt_template})
+        return await asyncio.to_thread(qa_chain.invoke, {"query": query})
+    else:
+        return vector_store

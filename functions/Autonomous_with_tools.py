@@ -5,7 +5,12 @@ from functions.Parse_and_find import parse_and_find
 
 def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key):
     print(user_query)
+    print(file_paths)
 
+    if len(file_paths) > 0:
+        vector_store = parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, ai=False)
+        print(vector_store.count())
+        breakpoint()
     # Step 1: send the conversation and available functions to the model
     messages = [
         {
