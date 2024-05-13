@@ -16,24 +16,20 @@ def save_chat(session_id, data, new_name=None):
         if not os.path.exists(new_session_dir):
             os.makedirs(new_session_dir)
 
-        # Handle renaming the file
-        if os.path.exists(original_file_path):
-            with open(original_file_path, 'r') as file:
-                content = json.load(file)
-            with open(new_file_path, 'w') as file:
-                json.dump(content, file)
-            os.remove(original_file_path)
+        # Move all files from the original to the new session directory
+        if os.path.exists(original_session_dir):
+            for filename in os.listdir(original_session_dir):
+                original_file = os.path.join(original_session_dir, filename)
+                new_file = os.path.join(new_session_dir, filename.replace(session_id, new_name))
+                shutil.move(original_file, new_file)
+
+            # If the old directory is now empty, remove it
+            if not os.listdir(original_session_dir):
+                os.rmdir(original_session_dir)
         else:
-            # If original file is missing, just initialize new session data
+            # If original directory is missing, just initialize new session data
             with open(new_file_path, 'w') as file:
                 json.dump(data, file)
-
-        # If the old directory is now empty, remove it
-        if not os.listdir(original_session_dir):
-            os.rmdir(original_session_dir)
-        elif original_session_dir != new_session_dir:
-            # If directories are different and the old is not empty, use shutil.move
-            shutil.move(original_session_dir, new_session_dir)
     else:
         # No renaming, just save the data
         if not os.path.exists(original_session_dir):

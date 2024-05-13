@@ -33,7 +33,7 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '90%', 'overflowY': 'scroll'},
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '80vh', 'overflowY': 'scroll'},
                      className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
             html.Button("Hidde settings", id='toggle-button', n_clicks=0, style={
@@ -564,7 +564,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
         else:
             directory_path = f'./chat_sessions/{session_id}'
             try:
-                file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
+                file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path) if
+                              not file_name.endswith('.json')]
             except:
                 file_paths = []
             ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
