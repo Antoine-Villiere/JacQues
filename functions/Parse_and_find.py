@@ -5,7 +5,7 @@ from langchain.memory import ConversationBufferMemory
 nest_asyncio.apply()
 
 
-async def load_or_parse_data(file_paths, api_key, session_id):
+async def load_or_parse_data(file_paths, llama_parse_id, session_id):
     parsed_data = []
     for file_path in file_paths:
         data_file = f"./chat_sessions/{session_id}/data_parse/parsed_data_{os.path.basename(file_path)}.pkl"
@@ -16,7 +16,7 @@ async def load_or_parse_data(file_paths, api_key, session_id):
         else:
             parsing_instruction = ("The provided document contains many tables. extract all the documnet, including "
                                    "table and best keep the same format as the original document.")
-            parser = LlamaParse(api_key=api_key, result_type="markdown",
+            parser = LlamaParse(api_key=llama_parse_id, result_type="markdown",
                                 parsing_instruction=parsing_instruction, max_timeout=5000)
             data = await asyncio.to_thread(parser.load_data, file_path)
             joblib.dump(data, data_file)
@@ -24,8 +24,8 @@ async def load_or_parse_data(file_paths, api_key, session_id):
     return parsed_data
 
 
-async def create_vector_database(file_paths, api_key, session_id):
-    documents = await load_or_parse_data(file_paths, api_key, session_id)
+async def create_vector_database(file_paths, llama_parse_id, session_id):
+    documents = await load_or_parse_data(file_paths, llama_parse_id, session_id)
     markdown_path = f"./chat_sessions/{session_id}/data_parse/output.md"
     with open(markdown_path, 'w', encoding='utf8') as f:
         for data in documents:
@@ -47,32 +47,21 @@ async def create_vector_database(file_paths, api_key, session_id):
 
 
 # Main Function to Run Everything
-async def parse_and_find(file_paths, query, model, api_key, temp, max_tokens, groq_api_key, session_id,ai=True):
+async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tokens, groq_api_key, session_id,ai=True):
     # Initialize the vector database and vector store
-    vector_store, embed_model = await create_vector_database(file_paths, api_key, session_id)
+    vector_store, embed_model = await create_vector_database(file_paths, llama_parse_id, session_id)
     vector_store = Chroma(embedding_function=embed_model, persist_directory=f"./chat_sessions/{session_id}/chroma/chroma_db", collection_name="rag")
-    retriever = vector_store.as_retriever(search_kwargs={'k': 3})
-    retrieved_context=retriever
-    breakpoint()
+    retrieved_context = vector_store.as_retriever(search_kwargs={'k': 3})
 
-    if ai and retrieved_contexts:
-        # Initialize AI components
-        chat_model = ChatGroq(temperature=temp, model_name=model, api_key=groq_api_key, max_tokens=max_tokens)
-        memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
-        prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question.
+    chat_model = ChatGroq(temperature=temp, model_name=model, api_key=groq_api_key, max_tokens=max_tokens)
+    memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
+    prompt_template = PromptTemplate(template="""Use the following pieces of information to answer the user's question.
                                                     Context: {context}
                                                     Question: {question}
                                                     Only return the helpful answer below and nothing else.
+                                                    If no relevant answer, return N/A.
                                                     Helpful answer:""",
                                          input_variables=['context', 'chat_history', 'question'])
-        qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever, memory=memory,
+    qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retrieved_context, memory=memory,
                                                return_source_documents=True, chain_type_kwargs={"prompt": prompt_template})
-        return await asyncio.to_thread(qa_chain.invoke, {"query": query})
-    elif not ai:
-        # Print and return retrieved contexts if AI processing is not requested
-        print(retrieved_contexts)
-        return retrieved_contexts
-    else:
-        # Handle case where no relevant contexts were retrieved
-        print("No relevant contexts retrieved.")
-        return "No relevant contexts retrieved."
+    return await asyncio.to_thread(qa_chain.invoke, {"query": query})
