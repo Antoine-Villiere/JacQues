@@ -1,7 +1,7 @@
 from functions.IMPORT import *
 from functions.Scrape_and_find import scrape_and_find
 from functions.Parse_and_find import parse_and_find
-from functions.Autonomous_with_tools import get_auto_assitant
+from functions.Autonomous_with_tools import get_auto_assistant
 from functions.chat_management import *
 from functions.config import *
 from functions.settings import *
@@ -701,8 +701,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
 
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id,
-                                   groq_api_key)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, groq_api_key, session_id,ai=True)))[
                     'result']
 
         elif filename:
@@ -711,8 +710,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, session_id,
-                                   groq_api_key)))[
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, groq_api_key, session_id,ai=True)))[
                     'result']
             filenames = filename
             file_children = [
@@ -736,7 +734,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
                               not file_name.endswith('.json')]
             except:
                 file_paths = []
-            ai_answer = get_auto_assitant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+            ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
                                           file_paths, llama_parse_id, session_id)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
