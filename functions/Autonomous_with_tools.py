@@ -3,13 +3,16 @@ from functions.Scrape_and_find import scrape_and_find
 from functions.Parse_and_find import parse_and_find
 
 
-def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,session_id):
+def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,
+                      session_id):
     print(user_query)
     print(file_paths)
+    print(len(file_paths))
 
     if len(file_paths) > 0:
-        vector_store = parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, ai=False)
-        print(vector_store.count())
+        retrieved_contexts = asyncio.run(parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, groq_api_key,session_id,
+                                      ai=False))
+        print(retrieved_contexts)
         breakpoint()
     # Step 1: send the conversation and available functions to the model
     messages = [
@@ -108,6 +111,6 @@ def get_auto_assitant(user_query, groq_api_key, brave_id, model_dropdown, temp, 
             ai_answer = ''
             if tool_calls == "scrape_and_find":
                 print("scrape_and_find")
-                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,session_id)
+                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, session_id)
             return ai_answer
     return response_message.content

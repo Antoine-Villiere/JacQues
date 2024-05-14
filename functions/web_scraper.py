@@ -53,7 +53,7 @@ async def fetch_and_process_links(session, sources):
 
 
 async def create_vector_database(contents,session_id):
-    os.makedirs("./data/data_web", exist_ok=True)
+    os.makedirs(f"./chat_sessions/{session_id}/data_web", exist_ok=True)
     markdown_path = f'./chat_sessions/{session_id}/data_web/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
         for content in contents:
