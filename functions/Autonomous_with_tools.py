@@ -4,24 +4,12 @@ from functions.Parse_and_find import parse_and_find
 
 
 def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,
-                      session_id):
-    print(user_query)
-    print(file_paths)
-    print(len(file_paths))
-
-    if len(file_paths) > 0:
-        retrieved_contexts = asyncio.run(parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, groq_api_key,session_id,
-                                      ai=False))
-        print(retrieved_contexts)
-        breakpoint()
-    # Step 1: send the conversation and available functions to the model
+                       session_id):
     messages = [
         {
             "role": "system",
             "content": ("You are an Assistant called 'JacQues' that answers questions by calling functions."
                         "First get additional information about the users question."
-                        "You can either use the `parse_and_find` tool to search your knowledge base or the "
-                        "`scrape_and_find` tool to search the internet."
                         "If the user asks about current events, use the `scrape_and_find` tool to search the "
                         "internet."
                         "If the user asks to summarize the conversation, use the `get_chat_history` tool to get your "
@@ -40,23 +28,6 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
         }
     ]
     tools = [
-        {
-            "type": "function",
-            "function": {
-                "name": "parse_and_find",
-                "description": "This function leverages a sophisticated document retrieval system to access a comprehensive knowledge base. It aims to efficiently parse the user's query and locate relevant information within internal documents, enabling the assistant to deliver accurate and well-informed responses.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "string",
-                            "description": "The user's question or inquiry, formatted as a detailed and contextual string. This query should be crafted carefully to include all necessary details and context to enhance the accuracy and relevance of the search results within the knowledge base.",
-                        }
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
         {
             "type": "function",
             "function": {
@@ -92,25 +63,64 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
             },
         }
     ]
-    client = Groq(api_key=groq_api_key)
-    response = client.chat.completions.create(
-        model=model_dropdown,
-        messages=messages,
-        tools=tools,
-        tool_choice="auto",
-        max_tokens=max_tokens
-    )
-    response_message = response.choices[0].message
-    print(response_message)
-    if response_message.content is None:
-        tool_calls = response_message.tool_calls[0].function.name
-        query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
-        print(tool_calls, query)
-        # Step 2: check if the model wanted to call a function
-        if tool_calls:
-            ai_answer = ''
-            if tool_calls == "scrape_and_find":
-                print("scrape_and_find")
-                ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, session_id)
-            return ai_answer
-    return response_message.content
+
+    # files
+    if len(file_paths) > 0:
+        retrieved_contexts = asyncio.run(
+            parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, groq_api_key, session_id,
+                           ai=True))
+        print(retrieved_contexts['result'])
+        if retrieved_contexts['result'] != "N/A":
+            return retrieved_contexts['result']
+        else:
+            client = Groq(api_key=groq_api_key)
+            response = client.chat.completions.create(
+                model=model_dropdown,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                max_tokens=max_tokens
+            )
+            response_message = response.choices[0].message
+            print(response_message)
+            if response_message.content is None:
+                tool_calls = response_message.tool_calls[0].function.name
+                query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
+                print(tool_calls, query)
+                # Step 2: check if the model wanted to call a function
+                if tool_calls:
+                    ai_answer = ''
+                    if tool_calls == "scrape_and_find":
+                        print("scrape_and_find")
+                        ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                                    session_id)
+                    return ai_answer
+
+
+    # no files
+    else:
+        client = Groq(api_key=groq_api_key)
+        response = client.chat.completions.create(
+            model=model_dropdown,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto",
+            max_tokens=max_tokens
+        )
+        response_message = response.choices[0].message
+        print(response_message)
+        if response_message.content is None:
+            tool_calls = response_message.tool_calls[0].function.name
+            query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
+            print(tool_calls, query)
+            # Step 2: check if the model wanted to call a function
+            if tool_calls:
+                ai_answer = ''
+                if tool_calls == "scrape_and_find":
+                    print("scrape_and_find")
+                    ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                                session_id)
+                return ai_answer
+        else:
+            return response_message.content
+

@@ -249,7 +249,6 @@ app.layout = dbc.Container([
                                 'border': f'1px solid {colors["secondary"]}'
                             },
                             n_clicks=0
-
                         ),
                         html.Button(
                             [
@@ -354,14 +353,15 @@ app.layout = dbc.Container([
 # Define the callback
 @app.callback(
     Output('output-personality', 'children'),
-    [Input('tech-innovator-card', 'n_clicks'),
-     Input('market-strategist-card', 'n_clicks'),
-     Input('productivity-guru-card', 'n_clicks'),
-     Input('creative-visionary-card', 'n_clicks')]
+    Input('tech-innovator-card', 'n_clicks'),
+    Input('market-strategist-card', 'n_clicks'),
+    Input('productivity-guru-card', 'n_clicks'),
+    Input('creative-visionary-card', 'n_clicks')
 )
 def update_output(tech_clicks, market_clicks, productivity_clicks, creative_clicks):
-    changed_id = [p['prop_id'] for p in dash.callback_context.triggered][0]
-    print(changed_id)
+    ctx = dash.callback_context
+    trigger_id = ctx.triggered[0]['prop_id']
+    print(ctx,trigger_id)
     breakpoint()
     if 'tech-innovator-card' in changed_id:
         return "Tech Innovator personality selected."
@@ -700,17 +700,18 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
                           not file_name.endswith('.json')]
 
             ai_answer = \
-                json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, groq_api_key, session_id,ai=True)))[
-                    'result']
+                asyncio.run(
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
+                                   groq_api_key, session_id, ai=True))['result']
 
         elif filename:
             print("data handling")
             directory_path = f'./chat_sessions/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
-                json.loads(asyncio.run(
-                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens, groq_api_key, session_id,ai=True)))[
+                asyncio.run(
+                    parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
+                                   groq_api_key, session_id, ai=True))[
                     'result']
             filenames = filename
             file_children = [
@@ -735,7 +736,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, t
             except:
                 file_paths = []
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                          file_paths, llama_parse_id, session_id)
+                                           file_paths, llama_parse_id, session_id)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data

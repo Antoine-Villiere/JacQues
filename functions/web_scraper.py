@@ -81,7 +81,7 @@ async def process_query(query, brave_id,session_id):
         print("Get information...")
         contents = await fetch_and_process_links(session, sources)
         print("Check coherence...")
-        vector_store, embed_model = await create_vector_database(contents)
+        vector_store, embed_model = await create_vector_database(contents,session_id)
         vector_store = Chroma(embedding_function=embed_model, persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
                               collection_name="rag")
         retriever = vector_store.as_retriever(search_kwargs={'k': 3})

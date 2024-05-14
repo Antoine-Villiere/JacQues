@@ -47,6 +47,6 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
                           api_key=groq_api_key, max_tokens=max_tokens)
     print("Almost finished...")
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever,
-                                           return_source_documents=True,
+                                           return_source_documents=False,
                                            chain_type_kwargs={"prompt": prompt_template})
     return qa_chain.invoke({"query": query})
