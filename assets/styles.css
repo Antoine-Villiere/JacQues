@@ -4,7 +4,7 @@
 }
 .hide-scrollbar::-webkit-scrollbar-thumb {
     background-color: rgba(0,0,0,0.5);  /* You can change the color and opacity */
-    border-radius: 10px;
+    border-radius: 50px;
 }
 .hide-scrollbar::-webkit-scrollbar-thumb:hover {
     background-color: rgba(0,0,0,0.6);  /* Darker color on hover */

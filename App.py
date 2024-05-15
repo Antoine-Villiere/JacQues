@@ -14,13 +14,8 @@ if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 
 # Path to the file
-file_path = 'assets/prompt'
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
-
-# Function to read file content
-with open(file_path, 'r', encoding='utf-8') as file:
-    prompt = file.read()
 
 # Initialize Dash app with Bootstrap theme
 app_settings = load_settings()
@@ -34,7 +29,7 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '79vh', 'overflowY': 'scroll'},
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '82vh', 'overflowY': 'scroll'},
                      className='hide-scrollbar'),
             html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
             dbc.Row([
@@ -67,7 +62,7 @@ app.layout = dbc.Container([
 
         dbc.Col(id='chat-column', children=[
             html.Div([
-                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '82%', 'overflowY': 'scroll'},
+                html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '86%', 'overflowY': 'scroll'},
                          className='hide-scrollbar'),
                 html.Div([
                     dcc.Textarea(id='user-input', placeholder='Message Jacques... Or type "/" for commands...',
@@ -204,7 +199,9 @@ app.layout = dbc.Container([
                 html.Div([
                     dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality"),
                     dcc.Input(id='title-input', type='text', placeholder='Enter title', style={'display': 'none'}),
-                    dcc.Input(id='description-input', type='text', placeholder='Enter description',
+                    dcc.Textarea(
+                        id='description-input',
+                        placeholder='Enter description',
                               style={'display': 'none'}),
                     html.Button("Update Personality", id='update-personality-btn', n_clicks=0,
                                 style={'display': 'none'}),
@@ -277,38 +274,58 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
         'borderRadius': '5px',
         'border': 'none',
         'marginBottom': '10px',
+        'marginRight': '80px'
     } if selected_personality else {'display': 'none'}
 
-    display_btn_delete = {'width': '40%',
-                          'right': '10px',
-                          'backgroundColor': "#ca6702",
-                          'color': 'white',
-                          'borderRadius': '5px',
-                          'border': 'none',
-                          'marginBottom': '10px'
-                          } if selected_personality else {'display': 'none'}
-    dropdown_style = {'width': '100%',
-                      'minHeight': '5px',
-                      'overflowY': 'auto',
-                      'borderRadius': '10px',
-                      'border': f'1px solid {colors["secondary"]}',
-                      'marginBottom': '15px',
-                      'marginTop': '15px',
-                      'font-size': '12px',
-                      'padding': '5px',
-                      'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                      'outline': 'none',
-                      ':focus': {
-                          'borderColor': '#0056b3',
-                          'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                      },
-                      'verticalAlign': 'middle', } if selected_personality else {'display': 'none'}
+    display_btn_delete = {
+        'width': '40%',
+        'right': '10px',
+        'backgroundColor': "#ca6702",
+        'color': 'white',
+        'borderRadius': '5px',
+        'border': 'none',
+        'marginBottom': '10px'
+    } if selected_personality else {'display': 'none'}
+    title_style = {'width': '100%',
+                   'minHeight': '5px',
+                   'overflowY': 'auto',
+                   'borderRadius': '10px',
+                   'border': f'1px solid {colors["secondary"]}',
+                   'marginBottom': '15px',
+                   'marginTop': '15px',
+                   'font-size': '15px',
+                   'padding': '5px',
+                   'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                   'outline': 'none',
+                   ':focus': {
+                       'borderColor': '#0056b3',
+                       'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                   },
+                   'verticalAlign': 'middle', } if selected_personality else {'display': 'none'}
+    description_style = {
+        'width': '100%',
+        'height': '24.5vh',
+        'borderRadius': '10px',
+        'border': f'1px solid {colors["secondary"]}',
+        'marginBottom': '15px',
+        'font-size': '15px',
+        'padding': '5px',
+        'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+        'outline': 'none',
+        ':focus': {
+            'borderColor': '#0056b3',
+            'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+        },
+        'whiteSpace': 'pre-wrap',
+        'overflowY': 'auto',
+        'wordWrap': 'break-word'
+    } if selected_personality else {'display': 'none'}
     return (options,
             selected_personality,
             title if selected_personality else '',
-            dropdown_style,
+            title_style,
             description if selected_personality else '',
-            dropdown_style,
+            description_style,
             display_btn_update,
             display_btn_delete)
 
@@ -469,7 +486,7 @@ def generate_file_preview(filenames):
             html.Span(f"{filename[:6]}...{filename.split('.')[-1]}" if len(filename) > 10 else filename,
                       title=f"{filename}",
                       style={'overflow': 'hidden', 'textOverflow': 'ellipsis', 'whiteSpace': 'nowrap'}),
-            html.Button('×', id={'type': 'delete-file', 'index': i}, className='close', **{'aria-label': 'Close file'},
+            html.Button('×', id={'type': 'delete-file', 'index': i}, className='close',
                         style={'fontSize': '16px', 'marginLeft': '10px', 'cursor': 'pointer',
                                'verticalAlign': 'middle'})
         ], className='d-flex align-items-center', style={'marginRight': '20px'})
@@ -585,19 +602,21 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
      Input('new-chat-button', 'n_clicks'),
      Input('upload-data', 'contents'),
      Input({'type': 'chat-session', 'index': ALL}, 'n_clicks'),
-     Input('temperature-slider', 'value'),
-     Input('tokens-slider', 'value'),
-     Input('groq-api-key', 'value'),
-     Input('llama-parse-id', 'value'),
-     Input('brave-id', 'value'),
-     Input('model-dropdown', 'value'),
+
      ],
     [State('user-input', 'value'),
      State('session-id', 'data'),
-     State('upload-data', 'filename')]
+     State('upload-data', 'filename'),
+     State('temperature-slider', 'value'),
+     State('tokens-slider', 'value'),
+     State('groq-api-key', 'value'),
+     State('llama-parse-id', 'value'),
+     State('brave-id', 'value'),
+     State('model-dropdown', 'value')
+     ]
 )
-def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, temp, max_tokens, groq_api_key,
-                llama_parse_id, brave_id, model_dropdown, user_input, session_id, filename):
+def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, user_input, session_id, filename,temp, max_tokens, groq_api_key,
+                llama_parse_id, brave_id, model_dropdown):
     global session_id_global, new_chat
     session_id = session_id_global
     ctx = callback_context
