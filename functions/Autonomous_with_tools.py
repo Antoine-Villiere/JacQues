@@ -1,32 +1,34 @@
 from functions.IMPORT import *
 from functions.Scrape_and_find import scrape_and_find
 from functions.Parse_and_find import parse_and_find
+from functions.chat_management import load_chat
 
 
 def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,
                        session_id):
+    chat_history = load_chat(session_id)
     messages = [
-        {
+        {**{
             "role": "system",
-            "content": ("You are an Assistant called 'JacQues' that answers questions by calling functions."
-                        "First get additional information about the users question."
-                        "If the user asks about current events, use the `scrape_and_find` tool to search the "
-                        "internet."
-                        "If the user asks to summarize the conversation, use the `get_chat_history` tool to get your "
-                        "chat history with the user."
-                        "Carefully process the information you have gathered and provide a clear and concise answer "
-                        "to the user."
-                        "Respond directly to the user with your answer, do not say 'here is the answer' or 'this is "
-                        "the answer' or 'According to the information provided'"
-                        "NEVER mention your knowledge base or say 'According to the search_knowledge_base tool' or "
-                        "'According to {some_tool} tool'.")
+            "content": """You are an AI Assistant named 'Jacques' specialized in responding to user inquiries. 
+Your initial step is to gather detailed information relevant to the user's question. For general queries, utilize your built-in knowledge. 
+However, if the question pertains to current events or requires the most recent information, deploy the scrape_and_find tool to conduct an internet search. After collecting the necessary data, analyze it to ensure your response is accurate, clear, and directly addresses the query. 
+                        
+Always provide answers in a straightforward manner without prefacing them with phrases like 'here is the answer' or 'according to...'. 
+Avoid mentioning your underlying tools or processes, such as 'knowledge base' or any specific tool names, in your responses.
 
-        },
+
+
+"""
+
+        }, **chat_history['messages']},
         {
             "role": "user",
             "content": user_query,
         }
     ]
+    print(messages)
+    breakpoint()
     tools = [
         {
             "type": "function",
@@ -45,23 +47,6 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "get_chat_history",
-                "description": "This function retrieves the entire interaction history between the user and the assistant. It is crucial for understanding the context of ongoing conversations and ensuring continuity in the dialogue. The function supports the assistant in delivering more personalized and context-aware responses.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {
-                            "type": "Boolean",
-                            "description": "A Boolean flag indicating whether the chat history should be retrieved. Setting this to True enables the assistant to review past interactions, which is particularly useful for maintaining context over extended conversations.",
-                        }
-                    },
-                    "required": ["query"],
-                },
-            },
-        }
     ]
 
     # files
@@ -79,7 +64,8 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
                 messages=messages,
                 tools=tools,
                 tool_choice="auto",
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
+                temperature=temp
             )
             response_message = response.choices[0].message
             print(response_message)
@@ -105,7 +91,8 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
             messages=messages,
             tools=tools,
             tool_choice="auto",
-            max_tokens=max_tokens
+            max_tokens=max_tokens,
+            temperature=temp
         )
         response_message = response.choices[0].message
         print(response_message)
@@ -123,4 +110,3 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
                 return ai_answer
         else:
             return response_message.content
-
