@@ -5,6 +5,7 @@ from functions.Autonomous_with_tools import get_auto_assistant
 from functions.chat_management import *
 from functions.config import *
 from functions.settings import *
+from functions.Personalities import load_personalities, save_personalities
 
 session_id_global = None
 new_chat = None
@@ -198,149 +199,18 @@ app.layout = dbc.Container([
                     value='llama3-70b-8192',
                     style={'marginBottom': '15px'}
                 ),
-                dcc.Textarea(
-                    id='model-prompt',
-                    value=prompt,
-                    style={'width': '100%',
-                           'minHeight': '35%',
-                           'overflowY': 'auto',
-                           'borderRadius': '10px',
-                           'border': f'1px solid {colors["secondary"]}',
-                           'marginBottom': '15px',
-                           'font-size': '14px',
-                           'padding': '15px',
-                           'outline': 'none',
-                           ':focus': {
-                               'borderColor': '#0056b3',
-                               'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                           },
-                           'verticalAlign': 'middle', 'display': 'none'}, className='hide-scrollbar'
 
-                ),
                 html.H6('Select Personality', style={'marginBottom': '10px'}),
-
-                html.Div(
-                    style={'display': 'flex', 'flexWrap': 'wrap', 'gap': '30px', 'justifyContent': 'space-between'},
-                    children=[
-                        html.Button(
-                            [
-                                html.H4('Tech Innovator', id='tech-innovator-title', className='card-title'),
-                                html.P('Pioneer in cutting-edge technology and innovation.',
-                                       id='tech-innovator-desc',
-                                       className='card-text'),
-                                dbc.Tooltip(
-                                    "Expert in emerging technologies, R&D, and innovative solutions.",
-                                    target='tech-innovator-desc',
-                                    placement='top'
-                                )
-                            ],
-                            id="tech-innovator-card",
-                            style={
-                                'flex': '1 1 calc(50% - 15px)',
-                                'cursor': 'pointer',
-                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                'outline': 'none',
-                                'backgroundColor': 'white',
-                                ':focus': {
-                                    'borderColor': '#0056b3',
-                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                                },
-                                'borderRadius': '10px',
-                                'border': f'1px solid {colors["secondary"]}'
-                            },
-                            n_clicks=0
-                        ),
-                        html.Button(
-                            [
-                                html.H4('Market Strategist', id='market-strategist-title',
-                                        className='card-title'),
-                                html.P('Master of market analysis and strategic planning.',
-                                       id='market-strategist-desc',
-                                       className='card-text'),
-                                dbc.Tooltip(
-                                    "Specialist in market trends, competitive analysis, and business strategy.",
-                                    target='market-strategist-desc',
-                                    placement='top'
-                                )
-                            ],
-                            id="market-strategist-card",
-                            style={
-                                'flex': '1 1 calc(50% - 15px)',
-                                'cursor': 'pointer',
-                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                'outline': 'none',
-                                'backgroundColor': 'white',
-                                ':focus': {
-                                    'borderColor': '#0056b3',
-                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                                },
-                                'borderRadius': '10px',
-                                'border': f'1px solid {colors["secondary"]}'
-                            },
-                            n_clicks=0
-                        ),
-
-                        html.Button(
-                            [
-                                html.H4('Productivity Guru', id='productivity-guru-title',
-                                        className='card-title'),
-                                html.P('Expert in optimizing tasks and enhancing efficiency.',
-                                       id='productivity-guru-desc',
-                                       className='card-text'),
-                                dbc.Tooltip(
-                                    "Skilled in time management, organization, and productivity tools.",
-                                    target='productivity-guru-desc',
-                                    placement='top'
-                                )
-                            ],
-                            id="productivity-guru-card",
-                            style={
-                                'flex': '1 1 calc(50% - 15px)',
-                                'cursor': 'pointer',
-                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                'outline': 'none',
-                                'backgroundColor': 'white',
-                                ':focus': {
-                                    'borderColor': '#0056b3',
-                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                                },
-                                'borderRadius': '10px',
-                                'border': f'1px solid {colors["secondary"]}'
-                            },
-                            n_clicks=0
-                        ),
-
-                        html.Button(
-                            [
-                                html.H4('Creative Visionary', id='creative-visionary-title',
-                                        className='card-title'),
-                                html.P('Champion of creativity and innovative content.',
-                                       id='creative-visionary-desc',
-                                       className='card-text'),
-                                dbc.Tooltip(
-                                    "Passionate about creative projects, content creation, and artistic expression.",
-                                    target='creative-visionary-desc',
-                                    placement='top'
-                                )
-                            ],
-                            id="creative-visionary-card",
-                            style={
-                                'flex': '1 1 calc(50% - 15px)',
-                                'cursor': 'pointer',
-                                'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                'outline': 'none',
-                                'backgroundColor': 'white',
-                                ':focus': {
-                                    'borderColor': '#0056b3',
-                                    'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                                },
-                                'borderRadius': '10px',
-                                'border': f'1px solid {colors["secondary"]}'
-                            },
-                            n_clicks=0
-                        ),
-                    ]
-                )
+                html.Div([
+                    dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality"),
+                    dcc.Input(id='title-input', type='text', placeholder='Enter title', style={'display': 'none'}),
+                    dcc.Input(id='description-input', type='text', placeholder='Enter description',
+                              style={'display': 'none'}),
+                    html.Button("Update Personality", id='update-personality-btn', n_clicks=0,
+                                style={'display': 'none'}),
+                    html.Button("Delete Personality", id='delete-personality-btn', n_clicks=0,
+                                style={'display': 'none'}),
+                ])
 
             ])], style={
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
@@ -351,28 +221,96 @@ app.layout = dbc.Container([
 
 
 # Define the callback
+# Combined Callback for Saving and Deleting Personalities
 @app.callback(
-    Output('output-personality', 'children'),
-    Input('tech-innovator-card', 'n_clicks'),
-    Input('market-strategist-card', 'n_clicks'),
-    Input('productivity-guru-card', 'n_clicks'),
-    Input('creative-visionary-card', 'n_clicks')
+    [Output('personality-dropdown', 'options'),
+     Output('personality-dropdown', 'value'),
+
+     Output('title-input', 'value'),
+     Output('title-input', 'style'),
+
+     Output('description-input', 'value'),
+     Output('description-input', 'style'),
+
+     Output('update-personality-btn', 'style'),
+     Output('delete-personality-btn', 'style')],
+
+    [Input('update-personality-btn', 'n_clicks'),
+     Input('delete-personality-btn', 'n_clicks'),
+     Input('personality-dropdown', 'value')],
+
+    [
+        State('title-input', 'value'),
+        State('description-input', 'value')]
 )
-def update_output(tech_clicks, market_clicks, productivity_clicks, creative_clicks):
+def modify_personalities(save_clicks, delete_clicks, selected_personality, title, description):
     ctx = dash.callback_context
-    trigger_id = ctx.triggered[0]['prop_id']
-    print(ctx,trigger_id)
-    breakpoint()
-    if 'tech-innovator-card' in changed_id:
-        return "Tech Innovator personality selected."
-    elif 'market-strategist-card' in changed_id:
-        return "Market Strategist personality selected."
-    elif 'productivity-guru-card' in changed_id:
-        return "Productivity Guru personality selected."
-    elif 'creative-visionary-card' in changed_id:
-        return "Creative Visionary personality selected."
+    if not ctx.triggered:
+        button_id = 'No clicks yet'
     else:
-        return "Select a personality."
+        button_id = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    personalities = load_personalities()
+    personalities['New Personality'] = 'Add a new personality'
+
+    try:
+        title = selected_personality
+        description = personalities[selected_personality]
+    except:
+        title = ''
+        description = ''
+    if button_id == 'save-changes-btn' and title and description:
+        personalities[title] = description  # Add or update an entry
+        save_personalities(personalities)
+    elif button_id == 'delete-personality-btn' and selected_personality:
+        if selected_personality in personalities:
+            del personalities[selected_personality]  # Delete an entry
+            save_personalities(personalities)
+            selected_personality = None  # Clear selection after deletion
+
+    options = [{'label': key, 'value': key} for key in personalities.keys()]
+    display_btn_update = {
+        'width': '40%',
+        'right': '10px',
+        'backgroundColor': colors['primary'],
+        'color': 'white',
+        'borderRadius': '5px',
+        'border': 'none',
+        'marginBottom': '10px',
+    } if selected_personality else {'display': 'none'}
+
+    display_btn_delete = {'width': '40%',
+                          'right': '10px',
+                          'backgroundColor': "#ca6702",
+                          'color': 'white',
+                          'borderRadius': '5px',
+                          'border': 'none',
+                          'marginBottom': '10px'
+                          } if selected_personality else {'display': 'none'}
+    dropdown_style = {'width': '100%',
+                      'minHeight': '5px',
+                      'overflowY': 'auto',
+                      'borderRadius': '10px',
+                      'border': f'1px solid {colors["secondary"]}',
+                      'marginBottom': '15px',
+                      'marginTop': '15px',
+                      'font-size': '12px',
+                      'padding': '5px',
+                      'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                      'outline': 'none',
+                      ':focus': {
+                          'borderColor': '#0056b3',
+                          'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                      },
+                      'verticalAlign': 'middle', } if selected_personality else {'display': 'none'}
+    return (options,
+            selected_personality,
+            title if selected_personality else '',
+            dropdown_style,
+            description if selected_personality else '',
+            dropdown_style,
+            display_btn_update,
+            display_btn_delete)
 
 
 @app.callback(
@@ -653,14 +591,13 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
      Input('llama-parse-id', 'value'),
      Input('brave-id', 'value'),
      Input('model-dropdown', 'value'),
-     Input('model-prompt', 'value'),
      ],
     [State('user-input', 'value'),
      State('session-id', 'data'),
      State('upload-data', 'filename')]
 )
 def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, temp, max_tokens, groq_api_key,
-                llama_parse_id, brave_id, model_dropdown, model_prompt, user_input, session_id, filename):
+                llama_parse_id, brave_id, model_dropdown, user_input, session_id, filename):
     global session_id_global, new_chat
     session_id = session_id_global
     ctx = callback_context
