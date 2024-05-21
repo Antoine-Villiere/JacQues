@@ -168,22 +168,34 @@ app.layout = dbc.Container([
 
                 html.H6('Brave api key', style={'marginBottom': '10px'}),
 
-                dcc.Input(id='brave-id', value=app_settings['brave_api_key'],
-                          style={'width': '100%',
-                                 'minHeight': '5px',
-                                 'overflowY': 'auto',
-                                 'borderRadius': '10px',
-                                 'border': f'1px solid {colors["secondary"]}',
-                                 'marginBottom': '15px',
-                                 'font-size': '12px',
-                                 'padding': '5px',
-                                 'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
-                                 'outline': 'none',
-                                 ':focus': {
-                                     'borderColor': '#0056b3',
-                                     'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
-                                 },
-                                 'verticalAlign': 'middle', }),
+                dbc.Row([
+                    dcc.Input(id='brave-id', value=app_settings['brave_api_key'],
+                              style={'width': '50%',
+                                     'minHeight': '5px',
+                                     'overflowY': 'auto',
+                                     'borderRadius': '10px',
+                                     'border': f'1px solid {colors["secondary"]}',
+                                     'marginBottom': '15px',
+                                     'font-size': '12px',
+                                     'padding': '5px',
+                                     'boxShadow': '0 4px 6px rgba(0, 0, 0, 0.1)',
+                                     'outline': 'none',
+                                     ':focus': {
+                                         'borderColor': '#0056b3',
+                                         'boxShadow': '0 0 0 0.2rem rgba(0, 86, 179, 0.25)'
+                                     },
+                                     'verticalAlign': 'middle', }),
+                    html.Div([dcc.Slider(0, 1,
+                                         id='internet-slider',
+                                         step=None,
+                                         marks={
+                                             0: 'OFF',
+                                             1: 'ON',
+                                         },
+                                         value=1)],
+                             style={'width': '50%'}
+                             )
+                ]),
                 html.H6('Select Model', style={'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
@@ -197,12 +209,12 @@ app.layout = dbc.Container([
 
                 html.H6('Select Personality', style={'marginBottom': '10px'}),
                 html.Div([
-                    dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality"),
+                    dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality", value='a'),
                     dcc.Input(id='title-input', type='text', placeholder='Enter title', style={'display': 'none'}),
                     dcc.Textarea(
                         id='description-input',
                         placeholder='Enter description',
-                              style={'display': 'none'}),
+                        style={'display': 'none'}),
                     html.Button("Update Personality", id='update-personality-btn', n_clicks=0,
                                 style={'display': 'none'}),
                     html.Button("Delete Personality", id='delete-personality-btn', n_clicks=0,
@@ -250,13 +262,15 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
     personalities = load_personalities()
     personalities['New Personality'] = 'Add a new personality'
 
+    print(button_id, title, description)
+
     try:
         title = selected_personality
         description = personalities[selected_personality]
     except:
         title = ''
         description = ''
-    if button_id == 'save-changes-btn' and title and description:
+    if button_id == 'update-personality-btn' and title and description:
         personalities[title] = description  # Add or update an entry
         save_personalities(personalities)
     elif button_id == 'delete-personality-btn' and selected_personality:
@@ -304,7 +318,7 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
                    'verticalAlign': 'middle', } if selected_personality else {'display': 'none'}
     description_style = {
         'width': '100%',
-        'height': '24.5vh',
+        'height': '20vh',
         'borderRadius': '10px',
         'border': f'1px solid {colors["secondary"]}',
         'marginBottom': '15px',
@@ -612,23 +626,32 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
      State('groq-api-key', 'value'),
      State('llama-parse-id', 'value'),
      State('brave-id', 'value'),
-     State('model-dropdown', 'value')
+     State('internet-slider', 'value'),
+     State('model-dropdown', 'value'),
+     State('title-input', 'value'),
+     State('description-input', 'value')
      ]
 )
-def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks, user_input, session_id, filename,temp, max_tokens, groq_api_key,
-                llama_parse_id, brave_id, model_dropdown):
+def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
+                user_input, session_id, filename,
+                temp, max_tokens,
+                groq_api_key,
+                llama_parse_id,
+                brave_id, internet_on_off,
+                model_dropdown, personnality_title, personnality_description):
     global session_id_global, new_chat
     session_id = session_id_global
     ctx = callback_context
     if not ctx.triggered:
         raise PreventUpdate
     button_id = ctx.triggered[0]['prop_id']
-    ai_answer = ''
     temp = temp / 100
     max_tokens = max_tokens * 100
     file_children = []
 
     if 'send-button' in button_id:
+        print(internet_on_off, personnality_description, personnality_title)
+        breakpoint()
         if not user_input:
             raise PreventUpdate
 
