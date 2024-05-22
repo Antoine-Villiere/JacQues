@@ -9,5 +9,6 @@ def load_personalities():
     return personalities
 
 def save_personalities(personalities):
+    print(personalities)
     with open('./assets/personalities.json', 'w') as f:
         json.dump(personalities, f)

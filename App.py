@@ -252,7 +252,7 @@ app.layout = dbc.Container([
         State('title-input', 'value'),
         State('description-input', 'value')]
 )
-def modify_personalities(save_clicks, delete_clicks, selected_personality, title, description):
+def modify_personalities(save_clicks, delete_clicks, selected_personality, title_, description_):
     ctx = dash.callback_context
     if not ctx.triggered:
         button_id = 'No clicks yet'
@@ -261,23 +261,23 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
 
     personalities = load_personalities()
     personalities['New Personality'] = 'Add a new personality'
-
-    print(button_id, title, description)
-
     try:
         title = selected_personality
         description = personalities[selected_personality]
     except:
         title = ''
         description = ''
-    if button_id == 'update-personality-btn' and title and description:
-        personalities[title] = description  # Add or update an entry
-        save_personalities(personalities)
-    elif button_id == 'delete-personality-btn' and selected_personality:
+    if button_id == 'update-personality-btn' and title_ and description_:  # Add or update an entry
         if selected_personality in personalities:
-            del personalities[selected_personality]  # Delete an entry
+            del personalities[selected_personality]
+        personalities[title_] = description_
+        save_personalities(personalities)
+        selected_personality = title_
+    elif button_id == 'delete-personality-btn' and selected_personality:  # Delete an entry
+        if selected_personality in personalities:
+            del personalities[selected_personality]
             save_personalities(personalities)
-            selected_personality = None  # Clear selection after deletion
+            selected_personality = None
 
     options = [{'label': key, 'value': key} for key in personalities.keys()]
     display_btn_update = {
