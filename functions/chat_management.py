@@ -59,7 +59,8 @@ def load_chat(session_id):
 
 
 def load_all_sessions():
-    sessions = []
+    session_details = []  # List to store session ids and their last modified times
+
     # Traverse each directory in CHAT_DIR
     for session_dir in os.listdir(CHAT_DIR):
         session_path = os.path.join(CHAT_DIR, session_dir)
@@ -67,8 +68,21 @@ def load_all_sessions():
             # Look for a JSON file in this directory
             for file in os.listdir(session_path):
                 if file.endswith('.json'):
+                    # Get the path to the JSON file
+                    file_path = os.path.join(session_path, file)
+                    # Get the last modified time
+                    last_modified = os.path.getmtime(file_path)
+                    # Get the session id from the file name
                     session_id = os.path.splitext(file)[0]
-                    sessions.append(session_id)
+                    # Append the session id and last modified time to the list
+                    session_details.append((session_id, last_modified))
+
+    # Sort sessions by last modified time, in descending order
+    session_details.sort(key=lambda x: x[1], reverse=True)
+
+    # Extract sorted session ids
+    sessions = [session[0] for session in session_details]
+
     return sessions
 
 
