@@ -638,7 +638,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                 groq_api_key,
                 llama_parse_id,
                 brave_id, internet_on_off,
-                model_dropdown, personnality_title, personnality_description):
+                model_dropdown, personality_title, personality_description):
     global session_id_global, new_chat
     session_id = session_id_global
     ctx = callback_context
@@ -650,8 +650,6 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
     file_children = []
 
     if 'send-button' in button_id:
-        print(internet_on_off, personnality_description, personnality_title)
-        breakpoint()
         if not user_input:
             raise PreventUpdate
 
@@ -663,12 +661,18 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             new_chat = 1
 
         chat_data = load_chat(session_id)
+        personality_description=personality_description
+        if personality_description:
+            print(personality_description, personality_title)
+        else:
+            personality_description = False
 
         if user_input.startswith('/web'):
             print("web crawling")
             user_input = user_input.replace("/web", "")
+
             ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                        session_id)
+                                        session_id,personality_description)
             ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
@@ -681,7 +685,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, ai=True))['result']
+                                   groq_api_key, session_id, personality_description,ai=True,))['result']
 
         elif filename:
             print("data handling")
@@ -690,7 +694,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, ai=True))[
+                                   groq_api_key, session_id, personality_description,ai=True,))[
                     'result']
             filenames = filename
             file_children = [
@@ -715,7 +719,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             except:
                 file_paths = []
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                           file_paths, llama_parse_id, session_id)
+                                           file_paths, llama_parse_id, session_id,personality_description)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
