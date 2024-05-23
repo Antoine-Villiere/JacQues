@@ -5,8 +5,9 @@ from functions.chat_management import load_chat
 
 
 def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,
-                       session_id):
+                       session_id, personality):
     chat_history = load_chat(session_id)
+    print(chat_history)
     messages = [
         {**{
             "role": "system",
@@ -53,7 +54,7 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
     if len(file_paths) > 0:
         retrieved_contexts = asyncio.run(
             parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, groq_api_key, session_id,
-                           ai=True))
+                           personality, ai=True))
         print(retrieved_contexts['result'])
         if retrieved_contexts['result'] != "N/A":
             return retrieved_contexts['result']
@@ -79,7 +80,7 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
                     if tool_calls == "scrape_and_find":
                         print("scrape_and_find")
                         ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                                    session_id)
+                                                    session_id, personality)
                     return ai_answer
 
 
@@ -106,7 +107,7 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
                 if tool_calls == "scrape_and_find":
                     print("scrape_and_find")
                     ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                                session_id)
+                                                session_id, personality)
                 return ai_answer
         else:
             return response_message.content
