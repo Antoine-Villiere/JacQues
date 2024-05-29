@@ -11,7 +11,8 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
             {
                 "role": "system",
                 "content": """You are a Question generator who generates an array of 3 rephrased questions in JSON format.
-                You MUST ONLY rely on the JSON schema. Question should be the closest as possible to the initial query.
+                You MUST ONLY rely on the JSON schema. DO NOT add any other comment like "here is the json". 
+                Question should be the closest as possible to the initial query.
               The JSON schema MUST include:
               {
                 "original": "The original search query or context",
@@ -58,7 +59,6 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
         prompt_template = PromptTemplate(template=template + complete,
                                          input_variables=['context', 'question'])
 
-    print(prompt_template)
     chat_model = ChatGroq(temperature=temp, model_name=model_dropdown,
                           api_key=groq_api_key, max_tokens=max_tokens)
     print("Almost finished...")

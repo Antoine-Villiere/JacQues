@@ -7,9 +7,7 @@ from functions.chat_management import load_chat
 def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, file_paths, api_key,
                        session_id, personality):
     chat_history = load_chat(session_id)
-    print(chat_history)
-    messages = [
-        {**{
+    messages = [{
             "role": "system",
             "content": """You are an AI Assistant named 'Jacques' specialized in responding to user inquiries. 
 Your initial step is to gather detailed information relevant to the user's question. For general queries, utilize your built-in knowledge. 
@@ -22,14 +20,16 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
 
 """
 
-        }, **chat_history['messages']},
-        {
-            "role": "user",
-            "content": user_query,
         }
     ]
-    print(messages)
-    breakpoint()
+    if 'messages' in chat_history:
+        messages.extend(chat_history['messages'])
+
+        # Adding the user's query to the messages
+    messages.append({
+        "role": "user",
+        "content": user_query,
+    })
     tools = [
         {
             "type": "function",
@@ -54,8 +54,7 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
     if len(file_paths) > 0:
         retrieved_contexts = asyncio.run(
             parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens, groq_api_key, session_id,
-                           personality, ai=True))
-        print(retrieved_contexts['result'])
+                           personality))
         if retrieved_contexts['result'] != "N/A":
             return retrieved_contexts['result']
         else:
@@ -69,18 +68,16 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
                 temperature=temp
             )
             response_message = response.choices[0].message
-            print(response_message)
             if response_message.content is None:
                 tool_calls = response_message.tool_calls[0].function.name
                 query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
-                print(tool_calls, query)
                 # Step 2: check if the model wanted to call a function
                 if tool_calls:
                     ai_answer = ''
                     if tool_calls == "scrape_and_find":
                         print("scrape_and_find")
                         ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                                    session_id, personality)
+                                                    session_id, personality)['result']
                     return ai_answer
 
 
@@ -96,11 +93,9 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
             temperature=temp
         )
         response_message = response.choices[0].message
-        print(response_message)
         if response_message.content is None:
             tool_calls = response_message.tool_calls[0].function.name
             query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
-            print(tool_calls, query)
             # Step 2: check if the model wanted to call a function
             if tool_calls:
                 ai_answer = ''
@@ -108,6 +103,6 @@ Avoid mentioning your underlying tools or processes, such as 'knowledge base' or
                     print("scrape_and_find")
                     ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
                                                 session_id, personality)
-                return ai_answer
+                return ai_answer['result']
         else:
             return response_message.content

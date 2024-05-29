@@ -13,6 +13,14 @@ new_chat = None
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 
+supported_extensions = [
+    '.pdf', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.rtf',
+    '.wps', '.wpd', '.sxw', '.stw', '.sxg', '.pages', '.mw', '.mcw',
+    '.uot', '.uof', '.uos', '.uop', '.ppt', '.pptx', '.pot', '.pptm',
+    '.potx', '.potm', '.key', '.odp', '.odg', '.otp', '.fopd', '.sxi',
+    '.sti', '.epub', '.html', '.htm'
+]
+
 # Path to the file
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
@@ -53,7 +61,71 @@ app.layout = dbc.Container([
                                 'borderRadius': '5px',
                                 'border': 'none',
                                 'marginBottom': '10px'
-                            })
+                            }),
+                dbc.Modal(
+                    [
+                        dbc.ModalHeader(dbc.ModalTitle("Jacques reminds me")),
+                        dbc.ModalBody(
+                            [
+                                html.Div(
+                                    id='chat-history-reminder',
+                                    style={
+                                        'marginBottom': '10px',
+                                        'height': '86%',
+                                        'overflowY': 'scroll'
+                                    },
+                                    className='hide-scrollbar'
+                                ),
+                                html.Div(
+                                    [
+                                        dcc.Textarea(
+                                            id='user-input-reminder',
+                                            placeholder='Ask Jacques what you would like to remind...',
+                                            spellCheck=True,
+                                            style={
+                                                'marginBottom': '0px',
+                                                'width': '95%',
+                                                'overflowY': 'scroll',
+                                                'borderRadius': '5px',
+                                                'color': '#6c757d',
+                                                'background-color': 'transparent',
+                                                'border': 'none'
+                                            },
+                                            className='hide-scrollbar'
+                                        ),
+                                    ],
+                                    style={
+                                        'display': 'flex',
+                                        'alignItems': 'center',
+                                        'backgroundColor': 'white',
+                                        'borderRadius': '10px',
+                                        'border': f'1px solid {colors["secondary"]}',
+                                        'marginBottom': '20px'
+                                    }
+                                ),
+                            ]
+                        ),
+                        dbc.ModalFooter(
+                            html.Button(
+                                '\u21E7',
+                                id='reminder-send-button',
+                                n_clicks=0,
+                                style={
+                                    'width': '5%',
+                                    'backgroundColor': colors['primary'],
+                                    'color': 'white',
+                                    'borderRadius': '5px',
+                                    'border': 'none',
+                                    'padding': '15px'
+                                }
+                            )
+                        ),
+                    ],
+                    id="modal",
+                    size="xl",
+                    is_open=False
+                )
+                ,
             ]),
             html.Div(id='toggle-state', children='show', style={'display': 'none'}),
 
@@ -661,10 +733,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             new_chat = 1
 
         chat_data = load_chat(session_id)
-        personality_description=personality_description
-        if personality_description:
-            print(personality_description, personality_title)
-        else:
+        personality_description = personality_description
+        if not personality_description:
             personality_description = False
 
         if user_input.startswith('/web'):
@@ -672,20 +742,20 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             user_input = user_input.replace("/web", "")
 
             ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                        session_id,personality_description)
+                                        session_id, personality_description)
             ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
             print("data handling")
             user_input = user_input.replace("/data", "")
             directory_path = f'./chat_sessions/{session_id}'
-            file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path) if
-                          not file_name.endswith('.json')]
+            file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path)
+                          if any(file_name.endswith(ext) for ext in supported_extensions)]
 
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, personality_description,ai=True,))['result']
+                                   groq_api_key, session_id, personality_description))['result']
 
         elif filename:
             print("data handling")
@@ -694,7 +764,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, personality_description,ai=True,))[
+                                   groq_api_key, session_id, personality_description))[
                     'result']
             filenames = filename
             file_children = [
@@ -714,16 +784,16 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
         else:
             directory_path = f'./chat_sessions/{session_id}'
             try:
-                file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path) if
-                              not file_name.endswith('.json')]
+                file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path)
+                              if any(file_name.endswith(ext) for ext in supported_extensions)]
             except:
                 file_paths = []
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                           file_paths, llama_parse_id, session_id,personality_description)
+                                           file_paths, llama_parse_id, session_id, personality_description)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
-        chat_data['messages'].append({'role': 'system', 'content': ai_answer})
+        chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
         # Save updated chat data
         save_chat(session_id, chat_data)
 
@@ -731,7 +801,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
         session_id = json.loads(ctx.triggered[0]['prop_id'].split('.')[0])['index']
     elif 'new-chat-button' in button_id:
         new_session_id = str(uuid.uuid4())
-        save_chat(new_session_id, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
+        save_chat(new_session_id,
+                  {'messages': [{'role': 'assistant', 'content': 'Welcome! How can I assist you today?'}]})
         session_id = new_session_id
         new_chat = 1
 
@@ -739,7 +810,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
     if not session_id:
         new_session_id = str(uuid.uuid4())
         save_chat(new_session_id,
-                  {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
+                  {'messages': [{'role': 'assistant', 'content': 'Welcome! How can I assist you today?'}]})
         session_id = new_session_id
         new_chat = 1
     chat_data = load_chat(session_id)
@@ -768,6 +839,17 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 
     session_id_global = session_id
     return chat_history_elements
+
+
+@app.callback(
+    Output("modal", "is_open"),
+    [Input("toggle-button-reminder", "n_clicks"), Input("reminder-send-button", "n_clicks")],
+    [State("modal", "is_open")],
+)
+def toggle_modal(n1, n2, is_open):
+    if n1 or n2:
+        return not is_open
+    return is_open
 
 
 # Run the app
