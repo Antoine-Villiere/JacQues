@@ -48,7 +48,7 @@ async def create_vector_database(file_paths, llama_parse_id, session_id):
 
 # Main Function to Run Everything
 async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tokens, groq_api_key, session_id,
-                         personality=False,ai=True):
+                         personality=False):
     # Initialize the vector database and vector store
     vector_store, embed_model = await create_vector_database(file_paths, llama_parse_id, session_id)
     vector_store = Chroma(embedding_function=embed_model,
