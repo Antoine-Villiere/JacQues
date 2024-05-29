@@ -14,7 +14,7 @@ async def load_or_parse_data(file_paths, llama_parse_id, session_id):
         if os.path.exists(data_file):
             parsed_data.append(joblib.load(data_file))
         else:
-            parsing_instruction = ("The provided document contains many tables. extract all the documnet, including "
+            parsing_instruction = ("The provided document contains many tables. extract all the document, including "
                                    "table and best keep the same format as the original document.")
             parser = LlamaParse(api_key=llama_parse_id, result_type="markdown",
                                 parsing_instruction=parsing_instruction, max_timeout=5000)
@@ -78,7 +78,6 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
         prompt_template = PromptTemplate(template=template + complete,
                                          input_variables=['context', 'chat_history', 'question'])
 
-    print(prompt_template)
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retrieved_context,
                                            memory=memory,
                                            return_source_documents=True, chain_type_kwargs={"prompt": prompt_template})

@@ -6,10 +6,10 @@ from functions.chat_management import *
 from functions.config import *
 from functions.settings import *
 from functions.Personalities import load_personalities, save_personalities
-
+from functions.Parse_and_remember import parse_and_remember
 session_id_global = None
 new_chat = None
-
+open_ = False
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 
@@ -64,7 +64,7 @@ app.layout = dbc.Container([
                             }),
                 dbc.Modal(
                     [
-                        dbc.ModalHeader(dbc.ModalTitle("Jacques reminds me")),
+                        dbc.ModalHeader(close_button=True),
                         dbc.ModalBody(
                             [
                                 html.Div(
@@ -75,55 +75,39 @@ app.layout = dbc.Container([
                                         'overflowY': 'scroll'
                                     },
                                     className='hide-scrollbar'
-                                ),
-                                html.Div(
-                                    [
-                                        dcc.Textarea(
-                                            id='user-input-reminder',
-                                            placeholder='Ask Jacques what you would like to remind...',
-                                            spellCheck=True,
-                                            style={
-                                                'marginBottom': '0px',
-                                                'width': '95%',
-                                                'overflowY': 'scroll',
-                                                'borderRadius': '5px',
-                                                'color': '#6c757d',
-                                                'background-color': 'transparent',
-                                                'border': 'none'
-                                            },
-                                            className='hide-scrollbar'
-                                        ),
-                                    ],
-                                    style={
-                                        'display': 'flex',
-                                        'alignItems': 'center',
-                                        'backgroundColor': 'white',
-                                        'borderRadius': '10px',
-                                        'border': f'1px solid {colors["secondary"]}',
-                                        'marginBottom': '20px'
-                                    }
-                                ),
+                                )
+
                             ]
                         ),
                         dbc.ModalFooter(
-                            html.Button(
-                                '\u21E7',
-                                id='reminder-send-button',
-                                n_clicks=0,
-                                style={
+                            html.Div([
+                                dcc.Textarea(id='reminder-user-input',
+                                             placeholder='Ask Jacques what you would like to remind...',
+                                             spellCheck=True,
+                                             style={'marginBottom': '0px', 'width': '95%', 'overflowY': 'scroll',
+                                                    'borderRadius': '5px', 'color': '#6c757d',
+                                                    'background-color': 'transparent', 'border': 'none'},
+                                             className='hide-scrollbar'),
+                                html.Button('\u21E7', id='reminder-send-button', n_clicks=0, style={
                                     'width': '5%',
                                     'backgroundColor': colors['primary'],
                                     'color': 'white',
                                     'borderRadius': '5px',
                                     'border': 'none',
-                                    'padding': '15px'
-                                }
-                            )
+                                    'padding': '15px',
+                                }),
+                            ], style={'display': 'flex', 'alignItems': 'center', 'backgroundColor': 'white',
+                                      'borderRadius': '10px', 'width': '100%',
+                                      'border': f'1px solid {colors["secondary"]}', 'marginBottom': '20px'})
                         ),
                     ],
                     id="modal",
                     size="xl",
-                    is_open=False
+                    is_open=False,
+                    backdrop='static',
+                    keyboard=False,
+                    centered=True,
+                    scrollable=True
                 )
                 ,
             ]),
@@ -748,7 +732,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
         elif user_input.startswith('/data'):
             print("data handling")
             user_input = user_input.replace("/data", "")
-            directory_path = f'./chat_sessions/{session_id}'
+            directory_path = f'{CHAT_DIR}/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path)
                           if any(file_name.endswith(ext) for ext in supported_extensions)]
 
@@ -759,7 +743,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 
         elif filename:
             print("data handling")
-            directory_path = f'./chat_sessions/{session_id}'
+            directory_path = f'{CHAT_DIR}/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 asyncio.run(
@@ -842,14 +826,47 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 
 
 @app.callback(
-    Output("modal", "is_open"),
-    [Input("toggle-button-reminder", "n_clicks"), Input("reminder-send-button", "n_clicks")],
-    [State("modal", "is_open")],
+    [Output('chat-history-reminder', 'children'),
+     Output("modal", "is_open")],
+    [Input("toggle-button-reminder", "n_clicks"),
+     Input('reminder-send-button', 'n_clicks')],
+    State('reminder-user-input', 'value')
 )
-def toggle_modal(n1, n2, is_open):
-    if n1 or n2:
-        return not is_open
-    return is_open
+def update_chat_reminder(n1, send_button, message):
+    directory_path = f'chat_reminder'
+    try:
+        chat_data = load_chat(directory_path)
+    except:
+        save_chat(directory_path, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
+        chat_data = load_chat(directory_path)
+    chat_data['messages'].append({'role': 'user', 'content': message})
+    # Append AI message to chat data
+    parse_and_remember(directory_path, 'query', 'model', 'temp', 'max_tokens', 'groq_api_key')
+    breakpoint()
+    chat_data['messages'].append({'role': 'assistant', 'content': message})
+    # Save updated chat data
+    save_chat(directory_path, chat_data)
+    chat_data = load_chat(directory_path)
+    chat_history_elements = []
+    if 'messages' not in chat_data:
+        return []
+    for idx, msg in enumerate(chat_data['messages']):
+        if msg['role'] == 'user':
+            profile_pic = user_profile_pic
+            style = {'textAlign': 'left',
+                     'padding': '10px',
+                     'borderRadius': '10px', 'marginBottom': '10px', 'maxWidth': '100%'}
+        else:
+            profile_pic = ai_profile_pic
+            style = {'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px',
+                     'borderRadius': '10px', 'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}
+        chat_bubble = html.Div([
+            html.Img(src=profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
+            html.Span(msg['content'], style={'marginLeft': '10px'})
+        ], style=style)
+        chat_history_elements.append(chat_bubble)
+        print(chat_history_elements)
+    return chat_history_elements, True
 
 
 # Run the app
