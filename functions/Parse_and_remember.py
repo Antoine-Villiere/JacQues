@@ -80,6 +80,7 @@ async def parse_and_remember(base_dir, query, groq_api_key):
                     Question: {question}
                     Only return the helpful answer below and nothing else.
                     If no relevant answer, please inform the user you cannot find any relevant information, do not try to reply alternatively.
+                    YOU MUST NOT ANSWER ANY QUESTION THAT ARE NOT DIRECTLY RELATED TO THE CONTEXT. 
                     Helpful answer:""",
         input_variables=['context', 'chat_history', 'question']
     )

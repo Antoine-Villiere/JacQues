@@ -38,9 +38,9 @@ app.layout = dbc.Container([
         dbc.Col([
             html.Button('New Chat', id='new-chat-button', n_clicks=0, style=btn_style),
             html.Div(id='list-chats',
-                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '82vh', 'overflowY': 'scroll'},
+                     style={'marginTop': '10px', 'marginBottom': '10px', 'height': '80vh', 'overflowY': 'scroll'},
                      className='hide-scrollbar'),
-            html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'maxHeight': '50px'}),
+            html.Div(id='file-display-area', style={'marginTop': '10px', 'overflowY': 'auto', 'Maxheight': '50px'}),
             dbc.Row([
                 html.Button(["Hide settings", html.I(className='fa fa-eye-slash')], id='toggle-button', n_clicks=0,
                             style={
@@ -68,7 +68,7 @@ app.layout = dbc.Container([
                         dbc.ModalHeader(close_button=True),
                         dbc.ModalBody(
                             [
-                                html.Div(
+                                dls.Hash(html.Div(
                                     id='chat-history-reminder',
                                     style={
                                         'marginBottom': '10px',
@@ -76,6 +76,9 @@ app.layout = dbc.Container([
                                         'overflowY': 'scroll'
                                     },
                                     className='hide-scrollbar'
+                                ), color="#435278",
+                                    speed_multiplier=2,
+                                    size=100,
                                 )
 
                             ]
@@ -127,7 +130,8 @@ app.layout = dbc.Container([
                                  style={'marginBottom': '0px', 'width': '95%', 'overflowY': 'scroll',
                                         'borderRadius': '5px', 'color': '#6c757d',
                                         'background-color': 'transparent', 'border': 'none'},
-                                 className='hide-scrollbar'),
+                                 className='hide-scrollbar',
+                                 persistence=False),
                     html.Button('\u21E7', id='send-button', n_clicks=0, style={
                         'width': '5%',
                         'backgroundColor': colors['primary'],
@@ -266,7 +270,7 @@ app.layout = dbc.Container([
 
                 html.H6('Select Personality', style={'marginBottom': '10px'}),
                 html.Div([
-                    dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality", value='a'),
+                    dcc.Dropdown(id='personality-dropdown', options=[], placeholder="Select a personality", value=None),
                     dcc.Input(id='title-input', type='text', placeholder='Enter title', style={'display': 'none'}),
                     dcc.Textarea(
                         id='description-input',
@@ -280,9 +284,8 @@ app.layout = dbc.Container([
 
             ])], style={
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
-            'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
-        }, width={'size': 3, 'offset': 0}),
-    ], style={'marginBottom': '20px'})  # Added margin between rows for better spacing
+            'border': f'1px solid {colors["secondary"]}', 'height': '95vh'}, width={'size': 3, 'offset': 0}),
+    ], style={'marginBottom': '20px'})
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
 
 
@@ -311,13 +314,32 @@ app.layout = dbc.Container([
 )
 def modify_personalities(save_clicks, delete_clicks, selected_personality, title_, description_):
     ctx = dash.callback_context
+    print(selected_personality)
     if not ctx.triggered:
         button_id = 'No clicks yet'
     else:
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     personalities = load_personalities()
-    personalities['New Personality'] = 'Add a new personality'
+    personalities['New Personality'] = """Describe as precise as possible the personnality. 
+    
+    1. Define the Purpose and Role
+Identify the primary role: Determine what specific functions the AI will perform.
+Set objectives: What problems is the AI designed to solve? What are the goals of the AI's interactions?
+
+2. Establish Core Competencies
+List skills and knowledge areas: Identify the key areas of expertise the AI needs to excel in.
+Determine depth of knowledge: Decide on the level of expertise (e.g., basic, intermediate, advanced).
+
+3. Create a Personality Profile
+Traits: Define personality traits such as friendly, professional, empathetic, etc.
+Communication style: Decide on the tone and style of interaction (formal, casual, technical, etc.).
+
+4. Develop Interaction Scenarios
+Common interactions: List typical questions or tasks the AI will handle.
+Responses: Craft sample responses for these scenarios to ensure consistency in personality and competency.
+
+"""
     try:
         title = selected_personality
         description = personalities[selected_personality]
@@ -394,7 +416,7 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
     return (options,
             selected_personality,
             title if selected_personality else '',
-            title_style,
+            title_style if selected_personality else '',
             description if selected_personality else '',
             description_style,
             display_btn_update,
@@ -413,7 +435,7 @@ def toggle_visibility(n_clicks, toggle_state):
     if n_clicks % 2 == 0:
         return {
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
-            'border': f'1px solid {colors["secondary"]}', 'height': '95vh', 'boxShadow': '0 4px 8px rgba(0,0,0,0.1)'
+            'border': f'1px solid {colors["secondary"]}', 'height': '95vh',
         }, {'size': 6, 'offset': 0}, ["Hide settings ", html.I(className='fa fa-eye-slash')]
     else:
         return {'display': 'none'}, {'size': 9, 'offset': 0}, ["Show settings ", html.I(className='fa fa-eye')]
@@ -719,7 +741,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 
         chat_data = load_chat(session_id)
         personality_description = personality_description
-        if not personality_description:
+        if not personality_description or personality_title == "New Personality":
             personality_description = False
 
         if user_input.startswith('/web'):
@@ -774,7 +796,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             except:
                 file_paths = []
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                           file_paths, llama_parse_id, session_id, personality_description)
+                                           file_paths, llama_parse_id, session_id, personality_description, internet_on_off)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
@@ -899,6 +921,7 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
 
     return dash.no_update, dash.no_update
 
+
 # Run the app
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run_server(debug=False)

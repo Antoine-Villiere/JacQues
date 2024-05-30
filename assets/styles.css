@@ -16,3 +16,11 @@
     scrollbar-width: thin;  /* 'auto' or 'thin' for Firefox */
     scrollbar-color: rgba(0,0,0,0.5) transparent;  /* scrollbar thumb and track colors */
 }
+
+.column_front {
+backgroundColor: white;
+padding: 30px;
+borderRadius: 10px;
+border: 1px solid #e9d8a6;
+height: 100vh
+}
