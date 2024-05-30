@@ -63,6 +63,8 @@ def load_all_sessions():
 
     # Traverse each directory in CHAT_DIR
     for session_dir in os.listdir(CHAT_DIR):
+        if 'chat_reminder' in session_dir:
+            continue
         session_path = os.path.join(CHAT_DIR, session_dir)
         if os.path.isdir(session_path):  # Make sure it's a directory
             # Look for a JSON file in this directory

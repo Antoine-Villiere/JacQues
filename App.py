@@ -7,12 +7,13 @@ from functions.config import *
 from functions.settings import *
 from functions.Personalities import load_personalities, save_personalities
 from functions.Parse_and_remember import parse_and_remember
+
 session_id_global = None
 new_chat = None
 open_ = False
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
-
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 supported_extensions = [
     '.pdf', '.doc', '.docx', '.docm', '.dot', '.dotx', '.dotm', '.rtf',
     '.wps', '.wpd', '.sxw', '.stw', '.sxg', '.pages', '.mw', '.mcw',
@@ -830,44 +831,73 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
      Output("modal", "is_open")],
     [Input("toggle-button-reminder", "n_clicks"),
      Input('reminder-send-button', 'n_clicks')],
-    State('reminder-user-input', 'value')
+    [State('reminder-user-input', 'value'),
+     State('groq-api-key', 'value'), ]
 )
-def update_chat_reminder(n1, send_button, message):
-    directory_path = f'chat_reminder'
-    try:
-        chat_data = load_chat(directory_path)
-    except:
+def update_chat_reminder(reminder_open_button, send_button, message, groq_api_key):
+    directory_path = 'chat_reminder'
+    ctx = dash.callback_context
+
+    # Determine which input triggered the callback
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update
+
+    trigger = ctx.triggered[0]['prop_id'].split('.')[0]
+
+    # Ensure the chat directory and initial message exists
+    if not os.path.exists(os.path.join(CHAT_DIR, directory_path)):
         save_chat(directory_path, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
-        chat_data = load_chat(directory_path)
-    chat_data['messages'].append({'role': 'user', 'content': message})
-    # Append AI message to chat data
-    parse_and_remember(directory_path, 'query', 'model', 'temp', 'max_tokens', 'groq_api_key')
-    breakpoint()
-    chat_data['messages'].append({'role': 'assistant', 'content': message})
-    # Save updated chat data
-    save_chat(directory_path, chat_data)
+
+    # Load chat data
     chat_data = load_chat(directory_path)
     chat_history_elements = []
-    if 'messages' not in chat_data:
-        return []
-    for idx, msg in enumerate(chat_data['messages']):
+    for msg in chat_data['messages']:
         if msg['role'] == 'user':
             profile_pic = user_profile_pic
-            style = {'textAlign': 'left',
-                     'padding': '10px',
-                     'borderRadius': '10px', 'marginBottom': '10px', 'maxWidth': '100%'}
+            style = {'textAlign': 'left', 'padding': '10px', 'borderRadius': '10px', 'marginBottom': '10px',
+                     'maxWidth': '100%'}
         else:
             profile_pic = ai_profile_pic
-            style = {'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px',
-                     'borderRadius': '10px', 'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}
+            style = {'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px', 'borderRadius': '10px',
+                     'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}
+
         chat_bubble = html.Div([
             html.Img(src=profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
             html.Span(msg['content'], style={'marginLeft': '10px'})
         ], style=style)
         chat_history_elements.append(chat_bubble)
-        print(chat_history_elements)
-    return chat_history_elements, True
 
+    if trigger == "toggle-button-reminder":
+        # Open modal and display chat history
+        return chat_history_elements, True
+
+    if trigger == "reminder-send-button" and message:
+        # Append user's message to chat data
+        chat_data['messages'].append({'role': 'user', 'content': message})
+
+        # Get AI response asynchronously
+        ai_answer = asyncio.run(parse_and_remember('chat_sessions', message, groq_api_key))['result']
+        chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
+
+        # Save updated chat data
+        save_chat(directory_path, chat_data)
+
+        # Update chat history elements with new messages
+        chat_history_elements.append(html.Div([
+            html.Img(src=user_profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
+            html.Span(message, style={'marginLeft': '10px'})
+        ], style={'textAlign': 'left', 'padding': '10px', 'borderRadius': '10px', 'marginBottom': '10px',
+                  'maxWidth': '100%'}))
+
+        chat_history_elements.append(html.Div([
+            html.Img(src=ai_profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
+            html.Span(ai_answer, style={'marginLeft': '10px'})
+        ], style={'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px', 'borderRadius': '10px',
+                  'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}))
+
+        return chat_history_elements, True
+
+    return dash.no_update, dash.no_update
 
 # Run the app
 if __name__ == '__main__':
