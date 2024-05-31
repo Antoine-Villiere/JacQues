@@ -11,6 +11,7 @@ from functions.Parse_and_remember import parse_and_remember
 session_id_global = None
 new_chat = None
 open_ = False
+global_check = True
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -27,7 +28,6 @@ ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
 
 # Initialize Dash app with Bootstrap theme
-app_settings = load_settings()
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP,
                                                 "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css"],
                 suppress_callback_exceptions=True)
@@ -163,8 +163,6 @@ app.layout = dbc.Container([
 
         dbc.Col(id='settings-column', children=[
             html.Div([
-
-                html.H4('Settings', style={'marginBottom': '20px'}),
                 html.H6('Degree of creativity', style={'marginBottom': '10px'}),
                 html.Div([
                     dcc.Slider(
@@ -192,7 +190,7 @@ app.layout = dbc.Container([
 
                 html.H6('Groq api key', style={'marginBottom': '10px'}),
 
-                dcc.Input(id='groq-api-key', value=app_settings['groq_api_key'],
+                dcc.Input(id='groq-api-key', value=load_settings()['groq_api_key'],
                           style={'width': '100%',
                                  'minHeight': '5px',
                                  'overflowY': 'auto',
@@ -210,7 +208,7 @@ app.layout = dbc.Container([
                                  'verticalAlign': 'middle', }),
                 html.H6('LlamaParse api key', style={'marginBottom': '10px'}),
 
-                dcc.Input(id='llama-parse-id', value=app_settings['llama_parse_key'],
+                dcc.Input(id='llama-parse-id', value=load_settings()['llama_parse_key'],
                           style={'width': '100%',
                                  'minHeight': '5px',
                                  'overflowY': 'auto',
@@ -230,7 +228,7 @@ app.layout = dbc.Container([
                 html.H6('Brave api key', style={'marginBottom': '10px'}),
 
                 dbc.Row([
-                    dcc.Input(id='brave-id', value=app_settings['brave_api_key'],
+                    dcc.Input(id='brave-id', value=load_settings()['brave_api_key'],
                               style={'width': '50%',
                                      'minHeight': '5px',
                                      'overflowY': 'auto',
@@ -257,6 +255,16 @@ app.layout = dbc.Container([
                              style={'width': '50%'}
                              )
                 ]),
+                html.Button('Save', id='save-button-api', n_clicks=0, style={
+                    'width': '40%',
+                    'right': '10px',
+                    'backgroundColor': colors['primary'],
+                    'color': 'white',
+                    'borderRadius': '5px',
+                    'border': 'none',
+                    'marginBottom': '10px',
+                }),
+
                 html.H6('Select Model', style={'marginBottom': '10px'}),
                 dcc.Dropdown(
                     id='model-dropdown',
@@ -314,7 +322,6 @@ app.layout = dbc.Container([
 )
 def modify_personalities(save_clicks, delete_clicks, selected_personality, title_, description_):
     ctx = dash.callback_context
-    print(selected_personality)
     if not ctx.triggered:
         button_id = 'No clicks yet'
     else:
@@ -416,7 +423,7 @@ Responses: Craft sample responses for these scenarios to ensure consistency in p
     return (options,
             selected_personality,
             title if selected_personality else '',
-            title_style if selected_personality else '',
+            title_style,
             description if selected_personality else '',
             description_style,
             display_btn_update,
@@ -442,30 +449,29 @@ def toggle_visibility(n_clicks, toggle_state):
 
 
 @app.callback(
-    Output('groq-api-key', 'value'),
-    Input('groq-api-key', 'value')
+    [Output('groq-api-key', 'value'),
+     Output('llama-parse-id', 'value'),
+     Output('brave-id', 'value')],
+    Input('save-button-api', 'n_clicks'),
+    [State('groq-api-key', 'value'),
+     State('llama-parse-id', 'value'),
+     State('brave-id', 'value')]
 )
-def update_groq_key(new_key):
-    update_setting('groq_api_key', new_key)
-    return new_key
+def update_groq_key(button, groq, llama, brave):
+    ctx = dash.callback_context
 
+    if not ctx.triggered:
+        return dash.no_update, dash.no_update, dash.no_update
 
-@app.callback(
-    Output('llama-parse-id', 'value'),
-    Input('llama-parse-id', 'value')
-)
-def update_llama_key(new_key):
-    update_setting('llama_parse_key', new_key)
-    return new_key
-
-
-@app.callback(
-    Output('brave-id', 'value'),
-    Input('brave-id', 'value')
-)
-def update_brave_key(new_key):
-    update_setting('brave_api_key', new_key)
-    return new_key
+    trigger_id = ctx.triggered[0]['prop_id'].split(".")[0]
+    if trigger_id == "save-button-api":
+        update_setting('groq_api_key', groq)
+        update_setting('llama-parse-id', llama)
+        update_setting('brave-id', brave)
+        data = load_settings()
+        return data['groq_api_key'], data['llama-parse-id'], data['brave-id']
+    else:
+        return dash.no_update, dash.no_update, dash.no_update
 
 
 @app.callback(
@@ -614,7 +620,7 @@ def display_command_options(input_value):
 )
 def new_chat_session(n_clicks):
     global new_chat, session_id_global
-    if n_clicks > 0 and new_chat is not None or session_id_global is None:
+    if session_id_global is None or (n_clicks > 0 and new_chat is not None):
         new_session_id = str(uuid.uuid4())
         save_chat(new_session_id, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
         new_chat = None
@@ -718,7 +724,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                 llama_parse_id,
                 brave_id, internet_on_off,
                 model_dropdown, personality_title, personality_description):
-    global session_id_global, new_chat
+    global session_id_global, new_chat, global_check
     session_id = session_id_global
     ctx = callback_context
     if not ctx.triggered:
@@ -763,6 +769,10 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
                                    groq_api_key, session_id, personality_description))['result']
+            if ai_answer == "N/A":
+                ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                               file_paths, llama_parse_id, session_id, personality_description,
+                                               internet_on_off=0)
 
         elif filename:
             print("data handling")
@@ -773,6 +783,10 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
                                    groq_api_key, session_id, personality_description))[
                     'result']
+            if ai_answer == "N/A":
+                ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                               file_paths, llama_parse_id, session_id, personality_description,
+                                               internet_on_off=0)
             filenames = filename
             file_children = [
                 html.Div([
@@ -796,7 +810,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             except:
                 file_paths = []
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                           file_paths, llama_parse_id, session_id, personality_description, internet_on_off)
+                                           file_paths, llama_parse_id, session_id, personality_description,
+                                           internet_on_off)
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
@@ -836,8 +851,11 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                      'borderRadius': '10px', 'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}
         chat_bubble = html.Div([
             html.Img(src=profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
-            html.Span(msg['content'], style={'marginLeft': '10px'})
+            html.Span(
+                [html.P(line, style={'margin': '0', 'line-height': '1.2'}) if line.strip() else html.Br() for line in
+                 msg['content'].split('\n')], style={'marginLeft': '10px'})
         ], style=style)
+
         chat_history_elements.append(chat_bubble)
 
     if filename:
@@ -845,6 +863,8 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
         chat_history_elements.insert(index_to_insert, html.Div(file_children))
 
     session_id_global = session_id
+    global_check = True
+
     return chat_history_elements
 
 
@@ -859,6 +879,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 def update_chat_reminder(reminder_open_button, send_button, message, groq_api_key):
     directory_path = 'chat_reminder'
     ctx = dash.callback_context
+    global global_check
 
     # Determine which input triggered the callback
     if not ctx.triggered:
@@ -898,7 +919,7 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
         chat_data['messages'].append({'role': 'user', 'content': message})
 
         # Get AI response asynchronously
-        ai_answer = asyncio.run(parse_and_remember('chat_sessions', message, groq_api_key))['result']
+        ai_answer = asyncio.run(parse_and_remember('chat_sessions', message, groq_api_key, global_check))['result']
         chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
 
         # Save updated chat data
@@ -907,16 +928,20 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
         # Update chat history elements with new messages
         chat_history_elements.append(html.Div([
             html.Img(src=user_profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
-            html.Span(message, style={'marginLeft': '10px'})
+            html.Span(
+                [html.P(line, style={'margin': '0', 'line-height': '1.2'}) if line.strip() else html.Br() for line in
+                 message.split('\n')], style={'marginLeft': '10px'})
         ], style={'textAlign': 'left', 'padding': '10px', 'borderRadius': '10px', 'marginBottom': '10px',
                   'maxWidth': '100%'}))
 
         chat_history_elements.append(html.Div([
             html.Img(src=ai_profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
-            html.Span(ai_answer, style={'marginLeft': '10px'})
+            html.Span(
+                [html.P(line, style={'margin': '0', 'line-height': '1.2'}) if line.strip() else html.Br() for line in
+                 ai_answer.split('\n')], style={'marginLeft': '10px'})
         ], style={'textAlign': 'left', 'backgroundColor': '#f9f7f3', 'padding': '10px', 'borderRadius': '10px',
                   'marginBottom': '10px', 'color': colors['text'], 'maxWidth': '100%'}))
-
+        global_check = False
         return chat_history_elements, True
 
     return dash.no_update, dash.no_update

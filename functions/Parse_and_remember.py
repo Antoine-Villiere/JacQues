@@ -56,17 +56,21 @@ async def create_vector_database(markdown_path, base_dir):
     )
     return vector_store, embed_model
 
-async def parse_and_remember(base_dir, query, groq_api_key):
+async def parse_and_remember(base_dir, query, groq_api_key, global_check):
     # Load and combine data from all sessions
-    markdown_path = await load_and_combine_data(base_dir)
 
-    # Initialize the vector database and vector store
-    vector_store, embed_model = await create_vector_database(markdown_path, base_dir)
-    vector_store = Chroma(
-        embedding_function=embed_model,
-        persist_directory=os.path.join(f"./{base_dir}", "chat_reminder", "chroma","chroma_db"),
-        collection_name="rag"
-    )
+    markdown_path = await load_and_combine_data(base_dir)
+    vector_store_dir = os.path.join(f"./{base_dir}", "chat_reminder", "chroma", "chroma_db")
+
+    if global_check or not os.path.exists(vector_store_dir):
+        vector_store, embed_model = await create_vector_database(markdown_path, base_dir)
+    else:
+        embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
+        vector_store = Chroma(
+            embedding_function=embed_model,
+            persist_directory=vector_store_dir,
+            collection_name="rag"
+        )
     retrieved_context = vector_store.as_retriever(search_kwargs={'k': 8})
 
     chat_model = ChatGroq(
