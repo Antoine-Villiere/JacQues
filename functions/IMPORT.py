@@ -16,6 +16,7 @@ import dash_bootstrap_components as dbc
 import openai
 import json
 import os
+import pickle
 import uuid
 from dash.exceptions import PreventUpdate
 from dash import callback_context

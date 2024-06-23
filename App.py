@@ -14,6 +14,7 @@ new_chat = None
 open_ = False
 global_check = True
 global_info = ""
+save_info("N/A")
 
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
@@ -562,7 +563,6 @@ def update_file_preview(contents, delete_clicks, send, filenames, stored_filenam
         session_dir = os.path.join(CHAT_DIR, session_id)
         if not os.path.exists(session_dir):
             os.makedirs(session_dir)
-        # Assuming contents are base64 encoded files
         for content, filename in zip(contents, filenames):
             data = content.split(',')[1]
             file_path = os.path.join(session_dir, filename)
@@ -805,12 +805,14 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             personality_description = False
 
         if user_input.startswith('/web'):
-            save_info("web crawling")
+            save_info("Web scraping...")
             user_input = user_input.replace("/web", "")
 
             ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
                                         session_id, personality_description)
             ai_answer = ai_answer['result']
+            save_info("DONE")
+
 
         elif user_input.startswith('/data'):
             save_info("data handling")
@@ -822,25 +824,27 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, personality_description))['result']
+                                   groq_api_key, session_id, personality_description, 3))['result']
+            save_info("DONE")
+
             if ai_answer == "N/A":
-                ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                               file_paths, llama_parse_id, session_id, personality_description,
-                                               internet_on_off=0)
+                    ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                                   file_paths, llama_parse_id, session_id, personality_description,
+                                                   internet_on_off=0)
 
         elif filename:
-            save_info("data handling")
+            save_info("Looking over the files...")
             directory_path = f'{CHAT_DIR}/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
                 asyncio.run(
                     parse_and_find(file_paths, user_input, model_dropdown, llama_parse_id, temp, max_tokens,
-                                   groq_api_key, session_id, personality_description))[
+                                   groq_api_key, session_id, personality_description, 3))[
                     'result']
             if ai_answer == "N/A":
-                ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
-                                               file_paths, llama_parse_id, session_id, personality_description,
-                                               internet_on_off=0)
+                    ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                                   file_paths, llama_parse_id, session_id, personality_description,
+                                                   internet_on_off=0)
             filenames = filename
             file_children = [
                 html.Div([
@@ -866,10 +870,13 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = get_auto_assistant(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
                                            file_paths, llama_parse_id, session_id, personality_description,
                                            internet_on_off)
+            save_info("DONE")
+
         # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
         # Append AI message to chat data
         chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
+        save_info("DONE")
         # Save updated chat data
         save_chat(session_id, chat_data)
 

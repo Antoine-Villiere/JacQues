@@ -49,12 +49,42 @@ async def create_vector_database(file_paths, llama_parse_id, session_id):
 
 # Main Function to Run Everything
 async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tokens, groq_api_key, session_id,
-                         personality=False):
+                         personality,number):
+    client = Groq(api_key=groq_api_key)
+    chat_completion = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": """You are a Question generator who generates an array of 3 rephrased questions in JSON format IN ENGLISH.
+                    You MUST ONLY rely on the JSON schema. DO NOT add any other comment like "here is the json". 
+                    Question should be the closest as possible to the initial query AND IN ENGLISH.
+                  The JSON schema MUST include:
+                  {
+                    "original": "The original search query or context",
+                    "followUp": [
+                      "Question 1",
+                      "Question 2", 
+                      "Question 3"
+                    ]
+                  }"""
+            },
+            {
+                "role": "user",
+                "content": query,
+            }
+        ],
+        model='llama3-70b-8192',
+        temperature=0,
+        max_tokens=500
+    )
+
+    questions = json.loads(chat_completion.choices[0].message.content)
+
     # Initialize the vector database and vector store
     vector_store, embed_model = await create_vector_database(file_paths, llama_parse_id, session_id)
     vector_store = Chroma(embedding_function=embed_model,
                           persist_directory=f"./chat_sessions/{session_id}/chroma/chroma_db", collection_name="rag")
-    retrieved_context = vector_store.as_retriever(search_kwargs={'k': 3})
+    retrieved_context = vector_store.as_retriever(search_kwargs={'k': number})
 
     chat_model = ChatGroq(temperature=temp, model_name=model, api_key=groq_api_key, max_tokens=max_tokens)
     memory = ConversationBufferMemory(memory_key='chat_history', return_messages=True, output_key='result')
@@ -64,7 +94,8 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
                                                     Context: {context}
                                                     Question: {question}
                                                     Only return the helpful answer below and nothing else.
-                                                    If no relevant answer, YOU MUST return N/A.
+                                                    If no relevant answer, YOU MUST ONLY REPLY N/A.
+                                                    If you cannot successfully reply, YOU MUST ONLY REPLY N/A.
                                                     Helpful answer:""",
                                          input_variables=['context', 'chat_history', 'question'])
     else:
@@ -73,7 +104,8 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
                                                         Context: {context}
                                                         Question: {question}
                                                         Only return the helpful answer below and nothing else.
-                                                        If no relevant answer, return N/A."""
+                                                        If no relevant answer, YOU MUST ONLY REPLY N/A.
+                                                        If you cannot successfully reply, YOU MUST ONLY REPLY N/A."""
         complete = f"""Here is the personality of the assistant to provide the answer:
                                                                             {personality}
                                                                             Helpful answer:"""
@@ -83,4 +115,4 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retrieved_context,
                                            memory=memory,
                                            return_source_documents=True, chain_type_kwargs={"prompt": prompt_template})
-    return await asyncio.to_thread(qa_chain.invoke, {"query": query})
+    return await asyncio.to_thread(qa_chain.invoke, {"query": questions['followUp'][0]})
