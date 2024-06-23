@@ -1,6 +1,7 @@
 from functions.IMPORT import *
 from langchain.chains import RetrievalQA
 from langchain.memory import ConversationBufferMemory
+from functions.chat_management import save_info
 
 nest_asyncio.apply()
 
@@ -63,10 +64,11 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
                                                     Context: {context}
                                                     Question: {question}
                                                     Only return the helpful answer below and nothing else.
-                                                    If no relevant answer, return N/A.
+                                                    If no relevant answer, YOU MUST return N/A.
                                                     Helpful answer:""",
                                          input_variables=['context', 'chat_history', 'question'])
     else:
+        save_info(f"Jacques will reply with the selected personality: {personality}")
         template = """Use the following pieces of information to answer the user's question.
                                                         Context: {context}
                                                         Question: {question}

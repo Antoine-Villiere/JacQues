@@ -1,8 +1,7 @@
 from functions.IMPORT import *
 from langchain.chains import RetrievalQA
 from langchain.memory import ConversationBufferMemory
-
-nest_asyncio.apply()
+from functions.chat_management import save_info
 
 
 nest_asyncio.apply()
@@ -24,13 +23,13 @@ async def load_and_combine_data(base_dir):
                             parsed_text = "\n".join(f"{msg['role']}: {msg['content']}" for msg in messages)
                             combined_data.append(f"## Discussion from {file}\n\n{parsed_text}\n")
                 except (json.JSONDecodeError, KeyError, IOError) as e:
-                    print(f"Error processing JSON file {file_path}: {e}")
+                    save_info(f"Error processing JSON file {file_path}: {e}")
             elif file.endswith('.md'):
                 try:
                     with open(file_path, 'r', encoding='utf8') as f:
                         combined_data.append(f"## Discussion from {file}\n\n{f.read()}\n")
                 except IOError as e:
-                    print(f"Error reading markdown file {file_path}: {e}")
+                    save_info(f"Error reading markdown file {file_path}: {e}")
 
     chat_reminder_dir = os.path.join(f"./{base_dir}", "chat_reminder")
     os.makedirs(chat_reminder_dir, exist_ok=True)

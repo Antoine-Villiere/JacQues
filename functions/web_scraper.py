@@ -1,7 +1,7 @@
 from functions.IMPORT import *
 import aiohttp
 from bs4 import BeautifulSoup
-
+from functions.chat_management import save_info
 
 async def fetch_page_content(session, url, timeout=800):
     try:
@@ -9,10 +9,10 @@ async def fetch_page_content(session, url, timeout=800):
             response.raise_for_status()
             return await response.text()
     except aiohttp.ClientResponseError:
-        print(f"Failed to fetch {url}. Status: {response.status}")
+        save_info(f"Failed to fetch {url}. Status: {response.status}")
         return None
     except asyncio.TimeoutError:
-        print(f"Timeout while fetching {url}")
+        save_info(f"Timeout while fetching {url}")
         return None
 
 
@@ -52,7 +52,7 @@ async def fetch_and_process_links(session, sources):
     return contents
 
 
-async def create_vector_database(contents,session_id):
+async def create_vector_database(contents, session_id):
     os.makedirs(f"./chat_sessions/{session_id}/data_web", exist_ok=True)
     markdown_path = f'./chat_sessions/{session_id}/data_web/output.md'
     with open(markdown_path, 'w', encoding='utf8') as f:
@@ -64,25 +64,33 @@ async def create_vector_database(contents,session_id):
         return None, None
 
     loader = UnstructuredMarkdownLoader(markdown_path)
+    save_info("Few more steps..")
     docs = loader.load()
+    save_info("Few more steps...")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=100)
+    save_info("Few more steps.")
     chunks = text_splitter.split_documents(docs)
+    save_info("Few more steps..")
     embed_model = FastEmbedEmbeddings(model_name="BAAI/bge-base-en-v1.5")
+    save_info("Few more steps...")
     vector_store = Chroma.from_documents(documents=chunks, embedding=embed_model,
                                          persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
                                          collection_name="rag")
+    save_info("Few more steps.")
     return vector_store, embed_model
 
 
-async def process_query(query, brave_id,session_id):
+async def process_query(query, brave_id, session_id):
     async with aiohttp.ClientSession() as session:
-        print("Fetch sources...")
+        save_info("Fetch sources...")
         sources = await fetch_search_results(session, brave_id, f'${query}$')
-        print("Get information...")
+        save_info("Get information...")
         contents = await fetch_and_process_links(session, sources)
-        print("Check coherence...")
-        vector_store, embed_model = await create_vector_database(contents,session_id)
-        vector_store = Chroma(embedding_function=embed_model, persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
+        save_info("Check coherence...")
+        save_info("Few more steps.")
+        vector_store, embed_model = await create_vector_database(contents, session_id)
+        vector_store = Chroma(embedding_function=embed_model,
+                              persist_directory=f'./chat_sessions/{session_id}/chroma/chroma_db_2',
                               collection_name="rag")
         retriever = vector_store.as_retriever(search_kwargs={'k': 3})
         return retriever

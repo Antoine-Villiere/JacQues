@@ -7,11 +7,14 @@ from functions.config import *
 from functions.settings import *
 from functions.Personalities import load_personalities, save_personalities
 from functions.Parse_and_remember import parse_and_remember
+from functions.chat_management import save_info
 
 session_id_global = None
 new_chat = None
 open_ = False
 global_check = True
+global_info = ""
+
 if not os.path.exists(CHAT_DIR):
     os.mkdir(CHAT_DIR)
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
@@ -26,6 +29,14 @@ supported_extensions = [
 # Path to the file
 ai_profile_pic = "assets/Ai.png"
 user_profile_pic = "assets/User.png"
+
+
+def read_info():
+    with open('assets/info.json', 'r') as f:
+        info = json.load(f)['info']
+
+    return info
+
 
 # Initialize Dash app with Bootstrap theme
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP,
@@ -122,6 +133,23 @@ app.layout = dbc.Container([
 
         dbc.Col(id='chat-column', children=[
             html.Div([
+                dbc.Modal(
+                    [
+                        dbc.ModalHeader(id="modal-header"),
+                        dbc.ModalBody(id="modal-body"),
+                    ],
+                    id="modal-sm",
+                    size="sm",
+                    is_open=False,
+                    backdrop='static',
+                    keyboard=False,
+                    centered=True,
+                ),
+                dcc.Interval(
+                    id='interval-component',
+                    interval=1 * 1000,  # in milliseconds
+                    n_intervals=0
+                ),
                 html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '86%', 'overflowY': 'scroll'},
                          className='hide-scrollbar'),
                 html.Div([
@@ -190,7 +218,7 @@ app.layout = dbc.Container([
 
                 html.H6('Groq api key', style={'marginBottom': '10px'}),
 
-                dcc.Input(id='groq-api-key', value=load_settings()['groq_api_key'],
+                dcc.Input(id='groq_api_key', value=load_settings()['groq_api_key'],
                           style={'width': '100%',
                                  'minHeight': '5px',
                                  'overflowY': 'auto',
@@ -208,7 +236,7 @@ app.layout = dbc.Container([
                                  'verticalAlign': 'middle', }),
                 html.H6('LlamaParse api key', style={'marginBottom': '10px'}),
 
-                dcc.Input(id='llama-parse-id', value=load_settings()['llama_parse_key'],
+                dcc.Input(id='llama_parse_key', value=load_settings()['llama_parse_key'],
                           style={'width': '100%',
                                  'minHeight': '5px',
                                  'overflowY': 'auto',
@@ -228,7 +256,7 @@ app.layout = dbc.Container([
                 html.H6('Brave api key', style={'marginBottom': '10px'}),
 
                 dbc.Row([
-                    dcc.Input(id='brave-id', value=load_settings()['brave_api_key'],
+                    dcc.Input(id='brave_api_key', value=load_settings()['brave_api_key'],
                               style={'width': '50%',
                                      'minHeight': '5px',
                                      'overflowY': 'auto',
@@ -269,8 +297,10 @@ app.layout = dbc.Container([
                 dcc.Dropdown(
                     id='model-dropdown',
                     options=[
-                        {'label': 'llama3', 'value': 'llama3-70b-8192'},
-                        {'label': 'Mixtral 8x7b', 'value': 'mixtral-8x7b-32768'}
+                        {'label': 'llama3 70B', 'value': 'llama3-70b-8192'},
+                        {'label': 'Mixtral 8x7b', 'value': 'mixtral-8x7b-32768'},
+                        {'label': 'llama3 8B', 'value': 'llama3-8b-8192'},
+                        {'label': 'gemma 7B', 'value': 'gemma-7b-it'},
                     ],
                     value='llama3-70b-8192',
                     style={'marginBottom': '15px'}
@@ -297,8 +327,24 @@ app.layout = dbc.Container([
 ], fluid=True, style={'backgroundColor': colors['background'], 'padding': '20px', 'height': '95vh'})
 
 
-# Define the callback
-# Combined Callback for Saving and Deleting Personalities
+@app.callback(
+    [Output("modal-sm", "is_open"),
+     Output("modal-header", "children"),
+     Output("modal-body", "children")],
+    [Input('interval-component', 'n_intervals')],
+    [State("modal-sm", "is_open")]
+)
+def toggle_modal(n_intervals, is_open):
+    modal_text = read_info()
+
+    if n_intervals and modal_text != "N/A":
+        if modal_text == "DONE":
+            return False, "Info", dbc.ModalBody()
+        return True, "Info", dbc.ModalBody(modal_text)
+    else:
+        return dash.no_update, dash.no_update, dash.no_update
+
+
 @app.callback(
     [Output('personality-dropdown', 'options'),
      Output('personality-dropdown', 'value'),
@@ -328,7 +374,7 @@ def modify_personalities(save_clicks, delete_clicks, selected_personality, title
         button_id = ctx.triggered[0]['prop_id'].split('.')[0]
 
     personalities = load_personalities()
-    personalities['New Personality'] = """Describe as precise as possible the personnality. 
+    personalities['*New Personality*'] = """Describe as precise as possible the personnality. 
     
     1. Define the Purpose and Role
 Identify the primary role: Determine what specific functions the AI will perform.
@@ -449,13 +495,13 @@ def toggle_visibility(n_clicks, toggle_state):
 
 
 @app.callback(
-    [Output('groq-api-key', 'value'),
-     Output('llama-parse-id', 'value'),
-     Output('brave-id', 'value')],
+    [Output('groq_api_key', 'value'),
+     Output('llama_parse_key', 'value'),
+     Output('brave_api_key', 'value')],
     Input('save-button-api', 'n_clicks'),
-    [State('groq-api-key', 'value'),
-     State('llama-parse-id', 'value'),
-     State('brave-id', 'value')]
+    [State('groq_api_key', 'value'),
+     State('llama_parse_key', 'value'),
+     State('brave_api_key', 'value')]
 )
 def update_groq_key(button, groq, llama, brave):
     ctx = dash.callback_context
@@ -466,10 +512,10 @@ def update_groq_key(button, groq, llama, brave):
     trigger_id = ctx.triggered[0]['prop_id'].split(".")[0]
     if trigger_id == "save-button-api":
         update_setting('groq_api_key', groq)
-        update_setting('llama-parse-id', llama)
-        update_setting('brave-id', brave)
+        update_setting('llama_parse_key', llama)
+        update_setting('brave_api_key', brave)
         data = load_settings()
-        return data['groq_api_key'], data['llama-parse-id'], data['brave-id']
+        return data['groq_api_key'], data['llama_parse_key'], data['brave_api_key']
     else:
         return dash.no_update, dash.no_update, dash.no_update
 
@@ -482,7 +528,10 @@ def update_groq_key(button, groq, llama, brave):
 def update_max_tokens(model_name):
     model_tokens = {
         'mixtral-8x7b-32768': 31950,
-        'llama3-70b-8192': 8192
+        'llama3-70b-8192': 8192,
+        'llama3-8b-8192': 8192,
+        'gemma-7b-it': 8192
+
     }
     max_tokens = model_tokens.get(model_name, 31950)
     marks = {5: '5 sentences max', max_tokens // 100: f'{round(max_tokens * 0.00025, 0)} pages max'}
@@ -683,8 +732,13 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
     if 'edit-button' in button_id:
         return [
             dcc.Input(id={'type': 'edit-input', 'index': session_index}, value=session_index, style={'width': '75%'}),
-            html.Button('Save', id={'type': 'save-button', 'index': session_index}, n_clicks=0),
-            html.Button('Delete', id={'type': 'delete-button', 'index': session_index}, n_clicks=0),
+            html.Button('Save', id={'type': 'save-button', 'index': session_index},
+                        style={'margin-left': '10px', 'backgroundColor': '#5cb85c', 'color': '#fff',
+                               'border': 'none',
+                               'padding': '5px 10px', 'borderRadius': '3px', 'cursor': 'pointer'}, n_clicks=0),
+            html.Button('Delete', id={'type': 'delete-button', 'index': session_index},
+                        style={'margin-left': '10px', 'backgroundColor': '#d9534f', 'color': '#fff', 'border': 'none',
+                               'padding': '5px 10px', 'borderRadius': '3px', 'cursor': 'pointer'}, n_clicks=0),
             html.Button('Edit', id={'type': 'edit-button', 'index': session_index}, n_clicks=0,
                         style={'display': 'none'}),
         ]
@@ -708,9 +762,9 @@ def edit_save_delete_session(edit_clicks, save_clicks, delete_clicks, session_id
      State('upload-data', 'filename'),
      State('temperature-slider', 'value'),
      State('tokens-slider', 'value'),
-     State('groq-api-key', 'value'),
-     State('llama-parse-id', 'value'),
-     State('brave-id', 'value'),
+     State('groq_api_key', 'value'),
+     State('llama_parse_key', 'value'),
+     State('brave_api_key', 'value'),
      State('internet-slider', 'value'),
      State('model-dropdown', 'value'),
      State('title-input', 'value'),
@@ -747,11 +801,11 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
 
         chat_data = load_chat(session_id)
         personality_description = personality_description
-        if not personality_description or personality_title == "New Personality":
+        if not personality_description or personality_title == "*New Personality*":
             personality_description = False
 
         if user_input.startswith('/web'):
-            print("web crawling")
+            save_info("web crawling")
             user_input = user_input.replace("/web", "")
 
             ai_answer = scrape_and_find(user_input, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
@@ -759,7 +813,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
             ai_answer = ai_answer['result']
 
         elif user_input.startswith('/data'):
-            print("data handling")
+            save_info("data handling")
             user_input = user_input.replace("/data", "")
             directory_path = f'{CHAT_DIR}/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in os.listdir(directory_path)
@@ -775,7 +829,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                                                internet_on_off=0)
 
         elif filename:
-            print("data handling")
+            save_info("data handling")
             directory_path = f'{CHAT_DIR}/{session_id}'
             file_paths = [os.path.join(directory_path, file_name) for file_name in filename]
             ai_answer = \
@@ -874,7 +928,7 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
     [Input("toggle-button-reminder", "n_clicks"),
      Input('reminder-send-button', 'n_clicks')],
     [State('reminder-user-input', 'value'),
-     State('groq-api-key', 'value'), ]
+     State('groq_api_key', 'value'), ]
 )
 def update_chat_reminder(reminder_open_button, send_button, message, groq_api_key):
     directory_path = 'chat_reminder'

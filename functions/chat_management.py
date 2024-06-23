@@ -1,5 +1,5 @@
 from functions.config import *
-from functions.IMPORT import os, json, shutil, dcc, html
+from functions.IMPORT import os, json, shutil, dcc, html, datetime
 
 
 def save_chat(session_id, data, new_name=None):
@@ -45,7 +45,7 @@ def delete_chat(session_id):
         shutil.rmtree(session_dir)
         return True
     else:
-        print("The directory does not exist.")
+        print( "The directory does not exist.")
         return False
 
 
@@ -89,26 +89,95 @@ def load_all_sessions():
 
 
 def create_session_div(session_id):
-    """ Helper function to create a chat session div with edit, delete, and save buttons (hidden initially). """
-    return html.Div([
-        dcc.Input(id={'type': 'edit-input', 'index': session_id}, value=session_id,
-                  style={'display': 'none', 'width': '100%', 'flex': '1'}),
-        html.Button('Save', id={'type': 'save-button', 'index': session_id}, n_clicks=0,
-                    style={'display': 'none', 'margin-left': '10px'}),
-        html.Span(session_id, id={'type': 'session-name', 'index': session_id},
-                  style={'margin-right': '10px', 'flex': '1'}),
-        html.Button('Edit', id={'type': 'edit-button', 'index': session_id}, n_clicks=0,
-                    style={'margin-left': '10px'}),
-        html.Button('Delete', id={'type': 'delete-button', 'index': session_id}, n_clicks=0,
-                    style={'margin-left': '10px'}),
-    ], id={'type': 'chat-session', 'index': session_id},
+    """Helper function to create a chat session div with edit, delete, and save buttons (hidden initially)."""
+
+    # Define the path to the session file
+    file_path = os.path.join(CHAT_DIR, session_id)
+
+    # Get the last modified time as a Unix timestamp and convert to a readable format
+    last_modified_timestamp = os.path.getmtime(file_path)
+    last_modified = datetime.datetime.fromtimestamp(last_modified_timestamp).strftime('%Y-%m-%d %H:%M')
+
+    # Create the session div
+    return html.Div(
+        [
+            # Hidden input for editing the session name
+            dcc.Input(
+                id={'type': 'edit-input', 'index': session_id},
+                value=session_id,
+                style={'display': 'none', 'width': '100%', 'flex': '1'}
+            ),
+
+            # Save button, initially hidden
+            html.Button(
+                'Save',
+                id={'type': 'save-button', 'index': session_id},
+                n_clicks=0,
+                style={'display': 'none', 'margin-left': '10px', 'backgroundColor': '#5cb85c', 'color': '#fff',
+                       'border': 'none',
+                       'padding': '5px 10px', 'borderRadius': '3px', 'cursor': 'pointer'}
+            ),
+
+            # Container for session name and timestamp
+            html.Div(
+                [
+                    # Session name display
+                    html.Span(
+                        session_id,
+                        id={'type': 'session-name', 'index': session_id},
+                        style={'margin-right': '10px', 'flex': '1', 'fontWeight': 'bold', 'fontSize': '16px',
+                               'color': '#333'}
+                    ),
+
+                    # Last modified timestamp display
+                    html.Span(
+                        f"Last Modified: {last_modified}",
+                        id={'type': 'last-modified', 'index': session_id},
+                        style={'margin-left': '5px', 'color': 'gray', 'fontSize': '10px'}
+                    ),
+                ],
+                style={'flex': '1', 'display': 'flex', 'flexDirection': 'column'}
+            ),
+
+            # Container for buttons
+            html.Div(
+                [
+                    # Edit button
+                    html.Button(
+                        'Edit',
+                        id={'type': 'edit-button', 'index': session_id},
+                        n_clicks=0,
+                        style={'margin-left': '10px', 'backgroundColor': '#f0ad4e', 'color': '#fff', 'border': 'none',
+                               'padding': '5px 10px', 'borderRadius': '3px', 'cursor': 'pointer'}
+                    ),
+
+                    # Delete button
+                    html.Button(
+                        'Delete',
+                        id={'type': 'delete-button', 'index': session_id},
+                        n_clicks=0,
+                        style={'margin-left': '10px', 'backgroundColor': '#d9534f', 'color': '#fff', 'border': 'none',
+                               'padding': '5px 10px', 'borderRadius': '3px', 'cursor': 'pointer'}
+                    ),
+                ],
+                style={'display': 'flex', 'alignItems': 'center'}
+            ),
+        ],
+        id={'type': 'chat-session', 'index': session_id},
         style={
-            'padding': '10px', 'cursor': 'pointer', 'border': f'1px solid {colors["secondary"]}',
-            'margin': '5px', 'borderRadius': '5px', 'display': 'flex', 'alignItems': 'center',
-            'justifyContent': 'space-between', 'backgroundColor': '#FFF', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
-        })
+            'padding': '15px', 'cursor': 'pointer', 'border': f'1px solid {colors["secondary"]}',
+            'margin': '10px 0', 'borderRadius': '8px', 'display': 'flex', 'alignItems': 'center',
+            'justifyContent': 'space-between', 'backgroundColor': '#f9f9f9', 'boxShadow': '0 2px 4px rgba(0,0,0,0.1)'
+        }
+    )
 
 
 def file_icon_and_color(ext):
     # Get the icon and color based on file extension
     return ICON_MAP.get(ext, ('fa-file', '#566573'))
+
+
+def save_info(info):
+    info = {'info': info}
+    with open('./assets/info.json', 'w') as f:
+        json.dump(info, f)
