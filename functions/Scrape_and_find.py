@@ -1,10 +1,11 @@
 from functions.IMPORT import *
 from functions.web_scraper import process_query
 from langchain.chains import RetrievalQA
+from functions.chat_management import save_info
 
 
 def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens, session_id, personality):
-    print("Initialization...")
+    save_info("Initialization...")
     client = Groq(api_key=groq_api_key)
     chat_completion = client.chat.completions.create(
         messages=[
@@ -53,7 +54,7 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
                                                                     Do not give any information about procedures and service features that are not mentioned in the PROVIDED CONTEXT.
                                                                     
                                                                     """
-        complete = f"""Here is the personality of the assitant to provide the answer:
+        complete = f"""Here is the personality of the assistant to provide the answer:
                                                                     {personality}
                                                                     Helpful answer:"""
         prompt_template = PromptTemplate(template=template + complete,
@@ -61,7 +62,7 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
 
     chat_model = ChatGroq(temperature=temp, model_name=model_dropdown,
                           api_key=groq_api_key, max_tokens=max_tokens)
-    print("Almost finished...")
+    save_info("Almost finished... Waiting for the AI")
     qa_chain = RetrievalQA.from_chain_type(llm=chat_model, chain_type="stuff", retriever=retriever,
                                            return_source_documents=False,
                                            chain_type_kwargs={"prompt": prompt_template})
