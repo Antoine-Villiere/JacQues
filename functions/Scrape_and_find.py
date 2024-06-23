@@ -29,9 +29,9 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
                 "content": query,
             }
         ],
-        model=model_dropdown,
-        temperature=temp,
-        max_tokens=max_tokens
+        model='llama3-70b-8192',
+        temperature=0,
+        max_tokens=500
     )
 
     questions = json.loads(chat_completion.choices[0].message.content)

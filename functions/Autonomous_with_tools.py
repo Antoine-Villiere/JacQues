@@ -55,12 +55,73 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
         if len(file_paths) > 0:
             if len(file_paths) < 2:
                 save_info("Parsing the document...")
+                print("parsing")
             else:
                 save_info("Parsing documents...")
             retrieved_contexts = await parse_and_find(file_paths, user_query, model_dropdown, api_key, temp, max_tokens,
-                                                      groq_api_key, session_id, personality)
+                                                      groq_api_key, session_id, personality, 3)
             if retrieved_contexts['result'] != "N/A":
                 return retrieved_contexts['result']
+            else:
+                save_info("It looks like it take a bit longer... Please wait :-)")
+                content = ""
+                for file_path in file_paths:
+                    pickle_file_path = f"{os.path.dirname(file_path)}/data_parse/parsed_data_{os.path.basename(file_path)}.pkl"
+                    with open(pickle_file_path, 'rb') as f:
+                        loaded_data = pickle.load(f)
+                        if isinstance(loaded_data, list):
+                            for item in loaded_data:
+                                content += str(item) + '\n\n'
+                        else:
+                            content += str(loaded_data) + '\n\n'
+                chat_historyy = load_chat(session_id)
+                contenu = f"""You are an AI Assistant named 'Jacques' specialized in responding to user inquiries.
+                            Your primary objective is to respond directly and accurately using your built-in knowledge.
+                            Only use internet searches if the query specifically requires the most recent information or pertains to current events.
+
+                            When responding, be concise and straightforward. Do not preface your answers with phrases like 'here is the answer' or 'according to...'.
+                            Avoid mentioning any underlying tools, processes, or specific names of resources used in your responses.
+                            
+                            Below the context that the User is questionning:
+                            {content}
+                            """
+                messagess = [
+                    {
+                        "role": "system",
+                        "content": contenu
+                    }
+                ]
+
+                if 'messages' in chat_historyy:
+                    messagess.extend(chat_historyy['messages'])
+
+                messagess.append({
+                    "role": "user",
+                    "content": user_query,
+                })
+                response = client.chat.completions.create(
+                    model=model_dropdown,
+                    messages=messagess,
+                    tools=tools if internet_on_off == 1 else None,
+                    tool_choice="auto" if internet_on_off == 1 else 'none',
+                    temperature=temp
+                )
+                response_message = response.choices[0].message
+
+                if response_message.content:
+                    save_info("DONE")
+                    return response_message.content
+
+                if internet_on_off == 1 and response_message.tool_calls:
+                    tool_calls = response_message.tool_calls[0].function.name
+                    query = json.loads(response_message.tool_calls[0].function.arguments)["query"]
+                    if tool_calls == "scrape_and_find":
+                        save_info("Scraping the web...")
+                        ai_answer = scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tokens,
+                                                    session_id,
+                                                    personality)
+                        save_info("DONE")
+                        return ai_answer['result']
 
         response = client.chat.completions.create(
             model=model_dropdown,
