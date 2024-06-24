@@ -39,12 +39,10 @@ def read_info():
     return info
 
 
-# Initialize Dash app with Bootstrap theme
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP,
                                                 "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.1/css/all.min.css"],
                 suppress_callback_exceptions=True)
 
-# Define the layout of the app
 app.layout = dbc.Container([
     dbc.Row([
         dbc.Col([
@@ -148,7 +146,7 @@ app.layout = dbc.Container([
                 ),
                 dcc.Interval(
                     id='interval-component',
-                    interval=1 * 1000,  # in milliseconds
+                    interval=1 * 1000,
                     n_intervals=0
                 ),
                 html.Div(id='chat-history', style={'marginBottom': '10px', 'height': '86%', 'overflowY': 'scroll'},
@@ -400,13 +398,13 @@ Responses: Craft sample responses for these scenarios to ensure consistency in p
     except:
         title = ''
         description = ''
-    if button_id == 'update-personality-btn' and title_ and description_:  # Add or update an entry
+    if button_id == 'update-personality-btn' and title_ and description_:
         if selected_personality in personalities:
             del personalities[selected_personality]
         personalities[title_] = description_
         save_personalities(personalities)
         selected_personality = title_
-    elif button_id == 'delete-personality-btn' and selected_personality:  # Delete an entry
+    elif button_id == 'delete-personality-btn' and selected_personality:
         if selected_personality in personalities:
             del personalities[selected_personality]
             save_personalities(personalities)
@@ -485,7 +483,6 @@ Responses: Craft sample responses for these scenarios to ensure consistency in p
     Input('toggle-state', 'children')
 )
 def toggle_visibility(n_clicks, toggle_state):
-    # Switch the visibility state
     if n_clicks % 2 == 0:
         return {
             'backgroundColor': 'white', 'padding': '30px', 'borderRadius': '10px',
@@ -568,11 +565,9 @@ def update_file_preview(contents, delete_clicks, send, filenames, stored_filenam
             file_path = os.path.join(session_dir, filename)
             with open(file_path, "wb") as fh:
                 fh.write(base64.b64decode(data))
-        # Update stored filenames with newly uploaded files
         stored_filenames = [os.path.join(session_id, fname) for fname in filenames]
         return generate_file_preview(filenames), stored_filenames
 
-    # Handling file delete
     elif 'delete-file' in trigger_id:
         button_id = json.loads(trigger_id.split('.')[0])
         index = button_id['index']
@@ -581,7 +576,6 @@ def update_file_preview(contents, delete_clicks, send, filenames, stored_filenam
         stored_filenames.pop(index)
         return generate_file_preview(stored_filenames), stored_filenames
 
-    # Send files to be process, delete div
     elif 'send-button' in trigger_id:
         return html.Div([], className='d-flex align-items-center', style={'overflowX': 'auto', 'whiteSpace': 'nowrap',
                                                                           'marginTop': '0px',
@@ -597,7 +591,7 @@ def display_session_files(n_clicks, ids):
     ctx = dash.callback_context
 
     if not ctx.triggered:
-        return dash.no_update  # No update if there's no click
+        return dash.no_update
 
     button_id = ctx.triggered[0]['prop_id']
     session_id = json.loads(button_id.split('.')[0])['index']
@@ -620,13 +614,11 @@ def display_session_files(n_clicks, ids):
         for i, filename in enumerate(file_names)
     ]
 
-    # Return a single horizontal row container
     return html.Div(children, className='d-flex align-items-center', style={'whiteSpace': 'nowrap',
                                                                             'marginTop': '0px', 'marginBottom': '0px'})
 
 
 def generate_file_preview(filenames):
-    # Utility function to generate HTML for file previews
     children = [
         html.Div([
             html.I(className=f"fas {file_icon_and_color(filename.split('.')[-1])[0]}",
@@ -641,7 +633,6 @@ def generate_file_preview(filenames):
         for i, filename in enumerate(filenames)
     ]
 
-    # Return a single horizontal row container
     return html.Div(children, className='d-flex align-items-center', style={'overflowX': 'auto', 'whiteSpace': 'nowrap',
                                                                             'marginTop': '0px', 'marginBottom': '0px'})
 
@@ -655,13 +646,11 @@ def display_command_options(input_value):
         raise PreventUpdate
 
     if input_value.startswith('/'):
-        # Assuming the user just typed "/", show the options
         if input_value == "/":
             return "/data or /web"
     return dash.no_update
 
 
-# New Chat
 @app.callback(
     Output('session-id', 'data'),
     Input('new-chat-button', 'n_clicks'),
@@ -676,7 +665,6 @@ def new_chat_session(n_clicks):
         return new_session_id
 
 
-# Update the chat list with all discussions
 @app.callback(
     Output('list-chats', 'children'),
     [Input('session-id', 'data'),
@@ -689,7 +677,6 @@ def update_chat_list(session_id, delete_clicks, ids, children):
     ctx = dash.callback_context
     trigger_id = ctx.triggered[0]['prop_id']
 
-    # Handle deletion
     if 'delete-button' in trigger_id:
         button_index = json.loads(trigger_id.split('.')[0])['index']
         new_children = [child for i, child in enumerate(children) if i != button_index]
@@ -706,7 +693,6 @@ def update_chat_list(session_id, delete_clicks, ids, children):
             new_chat = None
             return children + [new_child] if children else [new_child]
     else:
-        # Load all sessions if there is no active session
         sessions = load_all_sessions()
         session_children = [create_session_div(session_id) for session_id in sessions]
         return session_children
@@ -872,12 +858,9 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
                                            internet_on_off)
             save_info("DONE")
 
-        # Append user message to chat data
         chat_data['messages'].append({'role': 'user', 'content': user_input})
-        # Append AI message to chat data
         chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
         save_info("DONE")
-        # Save updated chat data
         save_chat(session_id, chat_data)
 
     elif 'chat-session' in button_id:
@@ -889,7 +872,6 @@ def update_chat(send_clicks, new_chat_clicks, upload_contents, session_clicks,
         session_id = new_session_id
         new_chat = 1
 
-    # Fetch messages for the current or selected session
     if not session_id:
         new_session_id = str(uuid.uuid4())
         save_chat(new_session_id,
@@ -942,17 +924,14 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
     ctx = dash.callback_context
     global global_check
 
-    # Determine which input triggered the callback
     if not ctx.triggered:
         return dash.no_update, dash.no_update
 
     trigger = ctx.triggered[0]['prop_id'].split('.')[0]
 
-    # Ensure the chat directory and initial message exists
     if not os.path.exists(os.path.join(CHAT_DIR, directory_path)):
         save_chat(directory_path, {'messages': [{'role': 'system', 'content': 'Welcome! How can I assist you today?'}]})
 
-    # Load chat data
     chat_data = load_chat(directory_path)
     chat_history_elements = []
     for msg in chat_data['messages']:
@@ -972,21 +951,16 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
         chat_history_elements.append(chat_bubble)
 
     if trigger == "toggle-button-reminder":
-        # Open modal and display chat history
         return chat_history_elements, True
 
     if trigger == "reminder-send-button" and message:
-        # Append user's message to chat data
         chat_data['messages'].append({'role': 'user', 'content': message})
 
-        # Get AI response asynchronously
         ai_answer = asyncio.run(parse_and_remember('chat_sessions', message, groq_api_key, global_check))['result']
         chat_data['messages'].append({'role': 'assistant', 'content': ai_answer})
 
-        # Save updated chat data
         save_chat(directory_path, chat_data)
 
-        # Update chat history elements with new messages
         chat_history_elements.append(html.Div([
             html.Img(src=user_profile_pic, style={'width': '30px', 'height': '30px', 'borderRadius': '50%'}),
             html.Span(
@@ -1008,6 +982,5 @@ def update_chat_reminder(reminder_open_button, send_button, message, groq_api_ke
     return dash.no_update, dash.no_update
 
 
-# Run the app
 if __name__ == '__main__':
     app.run_server(debug=False)

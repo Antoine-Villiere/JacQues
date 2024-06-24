@@ -56,7 +56,6 @@ async def create_vector_database(markdown_path, base_dir):
     return vector_store, embed_model
 
 async def parse_and_remember(base_dir, query, groq_api_key, global_check):
-    # Load and combine data from all sessions
 
     markdown_path = await load_and_combine_data(base_dir)
     vector_store_dir = os.path.join(f"./{base_dir}", "chat_reminder", "chroma", "chroma_db")
@@ -84,6 +83,7 @@ async def parse_and_remember(base_dir, query, groq_api_key, global_check):
                     Only return the helpful answer below and nothing else.
                     If no relevant answer, please inform the user you cannot find any relevant information, do not try to reply alternatively.
                     YOU MUST NOT ANSWER ANY QUESTION THAT ARE NOT DIRECTLY RELATED TO THE CONTEXT. 
+                    You MUST ALWAYS reply in the user language.
                     Helpful answer:""",
         input_variables=['context', 'chat_history', 'question']
     )

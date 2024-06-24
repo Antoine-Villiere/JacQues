@@ -1,6 +1,5 @@
 CHAT_DIR = './chat_sessions'
 
-# Define a consistent color scheme
 colors = {
     'background': '#f8f9fa',
     'text': '#343a40',
@@ -9,7 +8,6 @@ colors = {
     'user': '#94d2bd',
 }
 
-# Define some styles that will be used repeatedly
 btn_style = {
     'width': '100%',
     'backgroundColor': colors['primary'],
@@ -20,7 +18,6 @@ btn_style = {
     'marginBottom': '10px'
 }
 
-# Define a dictionary to map file extensions to icon class names (assuming use of FontAwesome or similar)
 ICON_MAP = {
     'csv': ('fa-file-csv', '#cb4335'),
     'docx': ('fa-file-word', '#2e86c1'),
