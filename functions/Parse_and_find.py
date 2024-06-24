@@ -47,7 +47,6 @@ async def create_vector_database(file_paths, llama_parse_id, session_id):
     return vector_store, embed_model
 
 
-# Main Function to Run Everything
 async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tokens, groq_api_key, session_id,
                          personality,number):
     client = Groq(api_key=groq_api_key)
@@ -80,7 +79,6 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
 
     questions = json.loads(chat_completion.choices[0].message.content)
 
-    # Initialize the vector database and vector store
     vector_store, embed_model = await create_vector_database(file_paths, llama_parse_id, session_id)
     vector_store = Chroma(embedding_function=embed_model,
                           persist_directory=f"./chat_sessions/{session_id}/chroma/chroma_db", collection_name="rag")
@@ -94,6 +92,7 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
                                                     Context: {context}
                                                     Question: {question}
                                                     Only return the helpful answer below and nothing else.
+                                                    You MUST ALWAYS reply in the user language.
                                                     If no relevant answer, YOU MUST ONLY REPLY N/A.
                                                     If you cannot successfully reply, YOU MUST ONLY REPLY N/A.
                                                     Helpful answer:""",
@@ -104,6 +103,7 @@ async def parse_and_find(file_paths, query, model, llama_parse_id, temp, max_tok
                                                         Context: {context}
                                                         Question: {question}
                                                         Only return the helpful answer below and nothing else.
+                                                        You MUST ALWAYS reply in the user language.
                                                         If no relevant answer, YOU MUST ONLY REPLY N/A.
                                                         If you cannot successfully reply, YOU MUST ONLY REPLY N/A."""
         complete = f"""Here is the personality of the assistant to provide the answer:

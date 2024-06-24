@@ -43,6 +43,7 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
                                                             Question: {question}
                                                             Only return the helpful answer below and nothing else. 
                                                             Do not give any information about procedures and service features that are not mentioned in the PROVIDED CONTEXT.
+                                                            You MUST ALWAYS reply in the user language.
                                                             Helpful answer:""",
                                          input_variables=['context', 'question'])
     else:
@@ -52,6 +53,7 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
                                                                     Question: {question}
                                                                     Only return the helpful answer below and nothing else. 
                                                                     Do not give any information about procedures and service features that are not mentioned in the PROVIDED CONTEXT.
+                                                                    You MUST ALWAYS reply in the user language.
                                                                     
                                                                     """
         complete = f"""Here is the personality of the assistant to provide the answer:
