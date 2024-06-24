@@ -2,7 +2,7 @@
 
 Jacques is a cutting-edge AI agent designed to revolutionize the way you interact with information and complete tasks. Developed as a solo project with assistance from AI, Jacques offers a seamless and intuitive experience for users across various domains.
 
-![Jacques AI Assistant](/Users/antoinevilliere/Desktop/Jarvis/pythonProject/assets/Ai.png)
+![Jacques AI Assistant](assets/Ai.png)
 
 ## Features
 
