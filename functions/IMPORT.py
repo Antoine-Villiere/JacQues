@@ -1,31 +1,26 @@
-import os
-import joblib
-import asyncio
-from llama_parse import LlamaParse
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_community.document_loaders import UnstructuredMarkdownLoader
-from langchain.prompts import PromptTemplate
-from langchain.chains import RetrievalQA
-from langchain_groq import ChatGroq
-import nest_asyncio
-import dash
-from dash import dcc, html, Input, Output, State, ALL, MATCH
-import dash_bootstrap_components as dbc
-import openai
-import json
-import os
-import pickle
-import uuid
-from dash.exceptions import PreventUpdate
-from dash import callback_context
-import datetime
-import json
-from groq import Groq
 import asyncio
 import base64
-import shutil
-import dash_loading_spinners as dls
-import aiofiles
+import datetime
+import json
 import logging
+import os
+import pickle
+import shutil
+import uuid
+import aiofiles
+import dash
+import dash_bootstrap_components as dbc
+import dash_loading_spinners as dls
+import joblib
+import nest_asyncio
+import openai
+from dash import MATCH, ALL, Input, Output, State, callback_context, dcc, html
+from dash.exceptions import PreventUpdate
+from groq import Groq
+from langchain.chains import RetrievalQA
+from langchain.prompts import PromptTemplate
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import UnstructuredMarkdownLoader
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
+from langchain_community.vectorstores import Chroma
+from llama_parse import LlamaParse
