@@ -62,9 +62,9 @@ Developed as a solo project, jacQues aims to offers a seamless and intuitive exp
    ```
 
 3. Set up your API keys in the settings panel:
-   - Groq API Key : [`https://console.groq.com/keys`](https://console.groq.com/keys)
-   - LlamaParse API Key : [`http://localhost:8050`](https://cloud.llamaindex.ai/login)
-   - Brave API Key : [`http://localhost:8050`](https://brave.com/search/api/)
+   - Groq API Key : [Groq API](https://console.groq.com/keys)
+   - LlamaParse API Key : [LlamaParse API](https://cloud.llamaindex.ai/login)
+   - Brave API Key : [Brave API](https://brave.com/search/api/)
 
 4. Run the application:
    ```
@@ -104,5 +104,3 @@ This project is open source and available under the [MIT License](https://openso
 - Thanks to the teams behind Groq, LlamaParse, and Brave for their excellent APIs.
 - Appreciation to the open-source community for developing powerful language models like LLaMA, Mixtral, and Gemma.
 - Special thanks to the various AI assistants that provided guidance during the development process.
-
----
