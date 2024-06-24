@@ -53,7 +53,7 @@ Developed as a solo project, jacQues aims to offers a seamless and intuitive exp
 
 1. Clone the repository:
    ```
-   git clone https://github.com/your-username/jacQues-ai-assistant.git
+   git clone https://github.com/Antoine-Villiere/JacQues.git
    ```
 
 2. Install dependencies:
