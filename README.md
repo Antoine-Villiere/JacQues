@@ -1,4 +1,4 @@
-# jacQues: Your Intelligent AI Assistant
+# jacQues: Your AI Assistant
 
 jacQues is a cutting-edge AI agent designed to revolutionize the way you interact with information and complete tasks. 
 Developed as a solo project, jacQues aims to offers a seamless and intuitive experience for users across various domains.
@@ -104,3 +104,16 @@ This project is open source and available under the [MIT License](https://openso
 - Thanks to the teams behind Groq, LlamaParse, and Brave for their excellent APIs.
 - Appreciation to the open-source community for developing powerful language models like LLaMA, Mixtral, and Gemma.
 - Special thanks to the various AI assistants that provided guidance during the development process.
+
+## Project Status
+jacQues is an ongoing project with no current plans for major changes to its core functionality. The focus is on maintaining and improving the existing features. Users and contributors should be aware that while bug fixes and minor enhancements may be implemented, significant alterations to the project's scope or direction are not planned at this time.
+
+## ⚠️ Important Warning
+Please be aware that jacQues, like all AI systems, has limitations:
+
+- **Potential Inaccuracie**s: jacQues may sometimes provide inaccurate or incorrect information. Always verify critical information from reliable sources.
+- **No Fact-Checking**: The system does not have built-in fact-checking capabilities. Use your judgment when interpreting responses.
+- **Limited Context**: While jacQues attempts to maintain context, it may not always fully understand the nuances of complex queries or situations.
+- **Evolving Technology**: As an open-source project, jacQues is continuously evolving. Features and capabilities may change over time.
+- **Not for Critical Decisions**: Do not rely solely on jacQues for making important decisions, especially in areas like health, finance, or legal matters.
+- **Do not share sensitive information**: While no information is shared with the owner of the project, the use of external services necessary for the good work of the AI (Groq, LlamaParse, and Brave) makes it recommended not to share any sensitive information.
