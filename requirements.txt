@@ -31,7 +31,7 @@ dirtyjson==1.0.8
 distro==1.9.0
 emoji==2.11.1
 fastapi==0.110.2
-fastembed==0.2.6
+fastembed
 filelock==3.13.4
 filetype==1.2.0
 Flask==3.0.3
@@ -145,8 +145,8 @@ tabulate==0.9.0
 tenacity==8.2.3
 threadpoolctl==3.5.0
 tiktoken==0.6.0
-tokenizers==0.19.1
 torch==2.3.0
+tokenizers
 tqdm==4.66.2
 transformers==4.40.1
 typer==0.12.3
