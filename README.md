@@ -5,6 +5,13 @@ Developed as a solo project, JacQues aims to offers a seamless and intuitive exp
 
 ![JacQues AI Assistant](assets/Ai.png)
 
+## Screenshots
+![App](screenshots/App.png)
+![Document information retreival](screenshots/Document.png)
+![Web Scraper](screenshots/Web.png)
+![Reminder](screenshots/Reminder.png)
+
+
 ## Features
 
 ### 1. Multi-Modal Information Processing
