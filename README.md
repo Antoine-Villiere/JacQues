@@ -67,7 +67,12 @@
    pip install -r requirements.txt
    ```
 
-3. Set up your API keys in the settings panel:
+2. On the Terminal,move to the folder by typping:
+   ```
+   cd JacQues
+   ```
+
+4. Set up your API keys in the settings panel (Make sure to keep then accessible):
    - Groq API Key : [Groq API](https://console.groq.com/keys)
    - LlamaParse API Key : [LlamaParse API](https://cloud.llamaindex.ai/login)
    - Brave API Key : [Brave API](https://brave.com/search/api/)
@@ -78,6 +83,9 @@
    ```
 
 5. Open your browser and navigate to `http://localhost:8050` to start chatting with JacQues!
+   
+6. On the setting panel, add your API keys, click "save" and enjoy!
+
 
 ## Usage Examples
 
