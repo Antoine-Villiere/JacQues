@@ -32,6 +32,7 @@ def save_chat(session_id, data, new_name=None):
             json.dump(data, file)
 
 
+
 def delete_chat(session_id):
     """ Delete chat data directory for a specific session. """
     session_dir = os.path.join(CHAT_DIR, session_id)

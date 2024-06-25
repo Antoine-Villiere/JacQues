@@ -18,6 +18,7 @@ btn_style = {
     'marginBottom': '10px'
 }
 
+
 ICON_MAP = {
     'csv': ('fa-file-csv', '#cb4335'),
     'docx': ('fa-file-word', '#2e86c1'),
