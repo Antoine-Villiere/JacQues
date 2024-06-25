@@ -19,6 +19,7 @@ import openai
 from bs4 import BeautifulSoup
 from groq import Groq
 from llama_parse import LlamaParse
+import markdown
 
 # Dash-related imports
 import dash
