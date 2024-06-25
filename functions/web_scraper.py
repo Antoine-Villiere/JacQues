@@ -23,6 +23,7 @@ async def clean_and_extract_content(html):
     return ' '.join(soup.stripped_strings)
 
 
+
 async def fetch_search_results(session, brave_id, query, results_count=10):
     url = f'https://api.search.brave.com/res/v1/web/search?q={query}&count={results_count}&country=fr'
     headers = {

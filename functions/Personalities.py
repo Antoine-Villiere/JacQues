@@ -11,3 +11,4 @@ def load_personalities():
 def save_personalities(personalities):
     with open('./assets/personalities.json', 'w') as f:
         json.dump(personalities, f)
+

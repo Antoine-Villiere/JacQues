@@ -29,6 +29,7 @@ def get_auto_assistant(user_query, groq_api_key, brave_id, model_dropdown, temp,
         "content": user_query,
     })
 
+
     client = Groq(api_key=groq_api_key)
 
     if internet_on_off == 1:
