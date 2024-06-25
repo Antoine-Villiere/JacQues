@@ -1,6 +1,4 @@
 from functions.IMPORT import *
-import aiohttp
-from bs4 import BeautifulSoup
 from functions.chat_management import save_info
 
 async def fetch_page_content(session, url, timeout=800):

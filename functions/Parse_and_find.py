@@ -1,6 +1,4 @@
 from functions.IMPORT import *
-from langchain.chains import RetrievalQA
-from langchain.memory import ConversationBufferMemory
 from functions.chat_management import save_info
 
 nest_asyncio.apply()
