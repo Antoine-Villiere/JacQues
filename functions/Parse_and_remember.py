@@ -31,6 +31,7 @@ async def load_and_combine_data(base_dir):
                 except IOError as e:
                     save_info(f"Error reading markdown file {file_path}: {e}")
 
+
     chat_reminder_dir = os.path.join(f"./{base_dir}", "chat_reminder")
     os.makedirs(chat_reminder_dir, exist_ok=True)
     markdown_path = os.path.join(chat_reminder_dir, "combined_output.md")

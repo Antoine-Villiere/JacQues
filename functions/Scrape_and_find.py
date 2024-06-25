@@ -34,6 +34,7 @@ def scrape_and_find(query, groq_api_key, brave_id, model_dropdown, temp, max_tok
         max_tokens=500
     )
 
+
     questions = json.loads(chat_completion.choices[0].message.content)
     retriever = asyncio.run(process_query(questions['followUp'][0], brave_id, session_id))
     if not personality:
