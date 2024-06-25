@@ -111,7 +111,7 @@ Contributions to improve JacQues are welcome! While we don't have a formal CONTR
 
 ## License
 
-This project is open source and available under the [MIT License](https://opensource.org/licenses/MIT).
+This project is open source and available under the [MIT License](LICENSE).
 
 ## Project Status
 JacQues is an ongoing project with no current plans for major changes to its core functionality. The focus is on maintaining and improving the existing features. Users and contributors should be aware that while bug fixes and minor enhancements may be implemented, significant alterations to the project's scope or direction are not planned at this time.
