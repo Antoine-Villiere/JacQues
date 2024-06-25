@@ -1,7 +1,6 @@
 # JacQues: Your AI Assistant
 
-JacQues is a cutting-edge AI agent designed to revolutionize the way you interact with information and complete tasks. 
-Developed as a solo project, JacQues aims to offers a seamless and intuitive experience for users across various domains.
+**𝐉𝐚𝐜𝐐𝐮𝐞𝐬** is an AI agent web app designed to retrieve information and complete tasks, offering a seamless and intuitive experience across various domains.
 
 ![JacQues AI Assistant](assets/Ai.png)
 
