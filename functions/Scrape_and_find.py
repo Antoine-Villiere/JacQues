@@ -1,6 +1,5 @@
 from functions.IMPORT import *
 from functions.web_scraper import process_query
-from langchain.chains import RetrievalQA
 from functions.chat_management import save_info
 
 
