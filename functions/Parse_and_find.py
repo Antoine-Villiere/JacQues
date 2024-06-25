@@ -23,6 +23,7 @@ async def load_or_parse_data(file_paths, llama_parse_id, session_id):
     return parsed_data
 
 
+
 async def create_vector_database(file_paths, llama_parse_id, session_id):
     documents = await load_or_parse_data(file_paths, llama_parse_id, session_id)
     markdown_path = f"./chat_sessions/{session_id}/data_parse/output.md"
