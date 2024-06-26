@@ -62,14 +62,14 @@
    git clone https://github.com/Antoine-Villiere/JacQues.git
    ```
 
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
-
 2. On the Terminal,move to the folder by typping:
    ```
    cd JacQues
+   ```
+   
+3. Install dependencies:
+   ```
+   pip install -r requirements.txt
    ```
 
 4. Set up your API keys in the settings panel (Make sure to keep then accessible):
