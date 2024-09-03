@@ -296,7 +296,7 @@ app.layout = dbc.Container([
                 dcc.Dropdown(
                     id='model-dropdown',
                     options=[
-                        {'label': 'llama3 70B', 'value': 'llama3-70b-8192'},
+                        {'label': 'llama3.1 405B', 'value': 'llama3-groq-70b-8192-tool-use-preview'},
                         {'label': 'Mixtral 8x7b', 'value': 'mixtral-8x7b-32768'},
                         {'label': 'llama3 8B', 'value': 'llama3-8b-8192'},
                         {'label': 'gemma 7B', 'value': 'gemma-7b-it'},
