@@ -90,6 +90,9 @@ class Settings:
     llm_streaming: bool = field(
         default_factory=lambda: os.getenv("LLM_STREAMING", "true").lower() == "true"
     )
+    app_timezone: str = field(
+        default_factory=lambda: os.getenv("APP_TIMEZONE", "Europe/Zurich")
+    )
     app_base_url: str = field(
         default_factory=lambda: os.getenv("APP_BASE_URL", "http://127.0.0.1:8050")
     )

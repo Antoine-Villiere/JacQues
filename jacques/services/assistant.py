@@ -14,11 +14,15 @@ SYSTEM_PROMPT = (
     "You are Jacques, a capable assistant. "
     "You manage multiple conversations with memory, answer questions, "
     "and use tools proactively when helpful. "
+    "If the user refers to an uploaded image, check available images and use "
+    "image_describe to analyze the relevant file. "
     "If details are missing, ask a brief follow-up question. "
     "When tools are used, summarize what was done and the result. "
     "Decide yourself when to update memory: only store stable preferences "
     "or enduring facts the user would expect you to remember. "
     "If unsure, ask first. Use the memory_append tool when appropriate. "
+    "Use email_draft to compose emails and open the user's mail app when asked. "
+    "Use task_schedule for reminders or recurring tasks (cron syntax) and do not store reminders in memory. "
     "When editing Word/Excel/PDF files, preserve original formatting; "
     "avoid rewriting entire documents when a targeted edit suffices. "
     "You can generate plots with plot_generate or plot_fred_series and show the image. "
@@ -63,6 +67,14 @@ def respond(
                     "content": f"RAG context:\n{rag_context}",
                 }
             )
+    image_context = _image_context(conversation_id)
+    if image_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Images available:\n{image_context}",
+            }
+        )
     for row in history_for_llm:
         messages.append({"role": row["role"], "content": row["content"]})
     last_user = (
@@ -130,6 +142,14 @@ def respond_streaming(
                     "content": f"RAG context:\n{rag_context}",
                 }
             )
+    image_context = _image_context(conversation_id)
+    if image_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Images available:\n{image_context}",
+            }
+        )
     for row in history_for_llm:
         messages.append({"role": row["role"], "content": row["content"]})
     last_user = (
@@ -591,6 +611,20 @@ def _maybe_append_sources(answer: str, sources: str | None) -> str:
     if "sources:" in answer.lower():
         return answer
     return f"{answer.rstrip()}\n\n{sources.strip()}"
+
+
+def _image_context(conversation_id: int, limit: int = 5) -> str:
+    images = db.list_images(conversation_id)
+    if not images:
+        return ""
+    lines = []
+    for image in images[:limit]:
+        name = image["name"]
+        description = (image["description"] or "").strip()
+        if not description:
+            description = "No description available."
+        lines.append(f"- {name}: {_clip_text(description, 240)}")
+    return "\n".join(lines)
 
 
 def _build_system_prompt() -> str:

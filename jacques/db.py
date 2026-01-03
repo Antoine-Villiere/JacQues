@@ -79,6 +79,24 @@ def init_db() -> None:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                task_type TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                cron TEXT NOT NULL,
+                timezone TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                last_run TEXT,
+                last_status TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
+            )
+            """
+        )
         auto_title_added = _ensure_column(
             conn, "conversations", "auto_title", "INTEGER"
         )
@@ -252,6 +270,42 @@ def get_latest_tool_message(conversation_id: int) -> sqlite3.Row | None:
         return cursor.fetchone()
 
 
+def get_latest_tool_message_by_name(conversation_id: int, name: str) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, content, created_at
+            FROM messages
+            WHERE conversation_id = ?
+              AND role = 'tool'
+              AND content LIKE ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id, f"%Tool result: **{name}**%"),
+        )
+        return cursor.fetchone()
+
+
+def get_latest_tool_call_message_by_name(
+    conversation_id: int, name: str
+) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, content, created_at
+            FROM messages
+            WHERE conversation_id = ?
+              AND role = 'tool'
+              AND content LIKE ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id, f"%Tool call: **{name}**%"),
+        )
+        return cursor.fetchone()
+
+
 def get_latest_web_search_message(conversation_id: int) -> sqlite3.Row | None:
     with get_connection() as conn:
         cursor = conn.execute(
@@ -282,6 +336,21 @@ def get_latest_assistant_message(conversation_id: int) -> sqlite3.Row | None:
             (conversation_id,),
         )
         return cursor.fetchone()
+
+
+def get_latest_message_id(conversation_id: int) -> int | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id FROM messages
+            WHERE conversation_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        row = cursor.fetchone()
+        return int(row["id"]) if row else None
 
 
 def get_setting(key: str, default: str | None = None) -> str | None:
@@ -480,6 +549,109 @@ def list_images(conversation_id: int) -> list[sqlite3.Row]:
             (conversation_id,),
         )
         return list(cursor.fetchall())
+
+
+def add_scheduled_task(
+    conversation_id: int,
+    name: str,
+    task_type: str,
+    payload: str,
+    cron: str,
+    timezone: str,
+    enabled: bool = True,
+) -> int:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO scheduled_tasks (
+                conversation_id, name, task_type, payload, cron, timezone, enabled, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                conversation_id,
+                name,
+                task_type,
+                payload,
+                cron,
+                timezone,
+                1 if enabled else 0,
+                _now(),
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def list_scheduled_tasks(conversation_id: int | None = None) -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        if conversation_id is None:
+            cursor = conn.execute(
+                """
+                SELECT id, conversation_id, name, task_type, payload, cron, timezone,
+                       enabled, last_run, last_status, created_at
+                FROM scheduled_tasks
+                ORDER BY id DESC
+                """
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, conversation_id, name, task_type, payload, cron, timezone,
+                       enabled, last_run, last_status, created_at
+                FROM scheduled_tasks
+                WHERE conversation_id = ?
+                ORDER BY id DESC
+                """,
+                (conversation_id,),
+            )
+        return list(cursor.fetchall())
+
+
+def get_scheduled_task(task_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, name, task_type, payload, cron, timezone,
+                   enabled, last_run, last_status, created_at
+            FROM scheduled_tasks
+            WHERE id = ?
+            """,
+            (task_id,),
+        )
+        return cursor.fetchone()
+
+
+def delete_scheduled_task(task_id: int) -> None:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
+        conn.commit()
+
+
+def set_scheduled_task_enabled(task_id: int, enabled: bool) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE scheduled_tasks SET enabled = ? WHERE id = ?",
+            (1 if enabled else 0, task_id),
+        )
+        conn.commit()
+
+
+def update_scheduled_task_status(
+    task_id: int,
+    last_run: str | None,
+    last_status: str | None,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            UPDATE scheduled_tasks
+            SET last_run = ?, last_status = ?
+            WHERE id = ?
+            """,
+            (last_run, last_status, task_id),
+        )
+        conn.commit()
 
 
 def get_image_by_name(conversation_id: int, name: str) -> sqlite3.Row | None:

@@ -10,4 +10,5 @@ __all__ = [
     "tooling",
     "vision",
     "web_search",
+    "scheduler",
 ]

@@ -58,6 +58,7 @@
     <div id="toolbar">
       <button id="highlight-btn">Highlight selection</button>
       <span id="status">Select text and click highlight.</span>
+      <a id="open-pdf-link" href="#" target="_blank" rel="noreferrer">Open PDF</a>
     </div>
     <div id="viewerContainer">
       <div id="viewer" class="pdfViewer"></div>
@@ -70,6 +71,7 @@
       const fileUrl = params.get("file");
       const docId = params.get("doc_id");
       const statusEl = document.getElementById("status");
+      const openLink = document.getElementById("open-pdf-link");
       const viewerContainer = document.getElementById("viewerContainer");
       const viewer = document.getElementById("viewer");
 
@@ -80,13 +82,17 @@
             "<div style='padding:16px;color:#cbd5e1;'>No PDF to display.</div>";
           return;
         }
-        const fallback = document.createElement("iframe");
-        fallback.src = url;
-        fallback.style.border = "none";
-        fallback.style.width = "100%";
-        fallback.style.height = "100%";
+        if (openLink) {
+          openLink.href = url;
+        }
+        const embed = document.createElement("embed");
+        embed.src = url;
+        embed.type = "application/pdf";
+        embed.style.border = "none";
+        embed.style.width = "100%";
+        embed.style.height = "100%";
         viewerContainer.innerHTML = "";
-        viewerContainer.appendChild(fallback);
+        viewerContainer.appendChild(embed);
       }
 
       if (!fileUrl) {
@@ -143,13 +149,21 @@
           showFallback(url, "PDF.js indisponible, fallback navigateur.");
           return;
         }
+        if (openLink) {
+          openLink.href = url;
+        }
         pagesReady = false;
         if (loadTimeout) {
           clearTimeout(loadTimeout);
           loadTimeout = null;
         }
-        pdfjsLib
-          .getDocument(url)
+        const loadingTask = pdfjsLib.getDocument({
+          url,
+          disableRange: true,
+          disableStream: true,
+          disableAutoFetch: true,
+        });
+        loadingTask
           .promise.then((pdf) => {
             pdfViewer.setDocument(pdf);
             linkService.setDocument(pdf, null);
@@ -159,7 +173,8 @@
             showFallback(url, `Chargement PDF impossible: ${err}`);
           });
         loadTimeout = window.setTimeout(() => {
-          if (!pagesReady) {
+          const hasCanvas = viewer && viewer.querySelector("canvas");
+          if (!pagesReady || !hasCanvas) {
             showFallback(url, "PDF.js timeout, fallback navigateur.");
           }
         }, 4500);

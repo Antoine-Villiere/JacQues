@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from urllib.parse import urlencode, quote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -9,7 +10,17 @@ from typing import Any, Callable
 from ..config import GENERATED_DIR, Settings, UPLOADS_DIR
 from ..utils import safe_filename
 from .. import db
-from . import doc_ingest, file_ops, image_gen, market_data, plotting, rag, vision, web_search
+from . import (
+    doc_ingest,
+    file_ops,
+    image_gen,
+    market_data,
+    plotting,
+    rag,
+    vision,
+    web_search,
+    scheduler as task_scheduler,
+)
 
 
 @dataclass
@@ -65,6 +76,78 @@ def build_tools(
             },
             handler=_tool_memory_append,
         )
+    )
+
+    tools.extend(
+        [
+            ToolSpec(
+                name="email_draft",
+                description="Create an email draft and open it in the user's mail app.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": ["string", "array"]},
+                        "subject": {"type": "string"},
+                        "body": {"type": "string"},
+                        "cc": {"type": ["string", "array"]},
+                        "bcc": {"type": ["string", "array"]},
+                    },
+                },
+                handler=_tool_email_draft,
+            ),
+            ToolSpec(
+                name="task_schedule",
+                description="Schedule a recurring task (cron) for reminders or web digests.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "task_type": {"type": "string", "enum": ["web_digest", "reminder"]},
+                        "cron": {
+                            "type": "string",
+                            "description": "Cron expression: min hour day month dow",
+                        },
+                        "timezone": {"type": "string"},
+                        "query": {"type": "string"},
+                        "message": {"type": "string"},
+                        "limit": {"type": "integer"},
+                        "use_llm": {"type": "boolean"},
+                        "enabled": {"type": "boolean"},
+                    },
+                    "required": ["cron"],
+                },
+                handler=_tool_task_schedule,
+            ),
+            ToolSpec(
+                name="task_list",
+                description="List scheduled tasks for this conversation.",
+                parameters={"type": "object", "properties": {}},
+                handler=_tool_task_list,
+            ),
+            ToolSpec(
+                name="task_delete",
+                description="Delete a scheduled task by id.",
+                parameters={
+                    "type": "object",
+                    "properties": {"task_id": {"type": "integer"}},
+                    "required": ["task_id"],
+                },
+                handler=_tool_task_delete,
+            ),
+            ToolSpec(
+                name="task_enable",
+                description="Enable or disable a scheduled task.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "integer"},
+                        "enabled": {"type": "boolean"},
+                    },
+                    "required": ["task_id", "enabled"],
+                },
+                handler=_tool_task_enable,
+            ),
+        ]
     )
 
     tools.extend(
@@ -369,6 +452,143 @@ def _tool_memory_append(args: dict[str, Any], settings: Settings, conversation_i
         updated = line
     db.set_setting("global_memory", updated)
     return "Global memory updated."
+
+
+def _tool_email_draft(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    def normalize_list(value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        text = str(value).strip()
+        if not text:
+            return []
+        parts = [item.strip() for item in text.replace(";", ",").split(",")]
+        return [part for part in parts if part]
+
+    to_list = normalize_list(args.get("to"))
+    cc_list = normalize_list(args.get("cc"))
+    bcc_list = normalize_list(args.get("bcc"))
+    subject = str(args.get("subject") or "").strip()
+    body = str(args.get("body") or "").strip()
+
+    mailto = "mailto:" + ",".join(to_list)
+    params: dict[str, str] = {}
+    if subject:
+        params["subject"] = subject
+    if body:
+        params["body"] = body
+    if cc_list:
+        params["cc"] = ",".join(cc_list)
+    if bcc_list:
+        params["bcc"] = ",".join(bcc_list)
+    if params:
+        mailto = f"{mailto}?{urlencode(params, quote_via=quote)}"
+
+    return (
+        "Email draft ready.\n"
+        f"Mailto: {mailto}\n"
+        f"To: {', '.join(to_list) if to_list else '-'}\n"
+        f"Subject: {subject or '-'}"
+    )
+
+
+def _tool_task_schedule(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    cron = str(args.get("cron", "")).strip()
+    if not cron:
+        return "Provide a cron schedule (min hour day month dow)."
+    name = str(args.get("name") or "").strip()
+    task_type = str(args.get("task_type") or "web_digest").strip()
+    if task_type not in {"web_digest", "reminder"}:
+        return "Unsupported task type."
+    timezone = str(args.get("timezone") or settings.app_timezone or "UTC").strip()
+    payload: dict[str, Any] = {}
+    if task_type == "web_digest":
+        query = str(args.get("query") or "").strip()
+        if not query and not name:
+            return "Provide a query for the web digest."
+        if not name:
+            name = f"Digest: {query}"
+        limit = args.get("limit")
+        use_llm = args.get("use_llm", True)
+        payload = {
+            "query": query or name,
+            "limit": int(limit) if isinstance(limit, int) and limit > 0 else 5,
+            "use_llm": bool(use_llm),
+        }
+    else:
+        message = str(
+            args.get("message") or args.get("query") or args.get("name") or ""
+        ).strip()
+        if not message:
+            return "Provide a reminder message."
+        if not name:
+            name = f"Rappel: {message}"
+        payload = {"message": message}
+    enabled = args.get("enabled", True)
+    task_id = db.add_scheduled_task(
+        conversation_id=conversation_id,
+        name=name,
+        task_type=task_type,
+        payload=json.dumps(payload, ensure_ascii=True),
+        cron=cron,
+        timezone=timezone,
+        enabled=bool(enabled),
+    )
+    if enabled:
+        task_scheduler.schedule_task_by_id(task_id, settings)
+    return (
+        f"Task scheduled (id {task_id}): {name} | cron `{cron}` | "
+        f"tz `{timezone}`"
+    )
+
+
+def _tool_task_list(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    tasks = db.list_scheduled_tasks(conversation_id)
+    if not tasks:
+        return "No scheduled tasks."
+    lines = []
+    for task in tasks:
+        status = "enabled" if task["enabled"] else "disabled"
+        last_run = task["last_run"] or "-"
+        last_status = task["last_status"] or "-"
+        lines.append(
+            f"- {task['id']}: {task['name']} | {task['task_type']} | "
+            f"cron `{task['cron']}` | tz `{task['timezone']}` | {status} | "
+            f"last_run {last_run} | {last_status}"
+        )
+    return "Scheduled tasks:\n" + "\n".join(lines)
+
+
+def _tool_task_delete(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    task_id = args.get("task_id")
+    if not isinstance(task_id, int):
+        return "Provide a valid task_id."
+    task = db.get_scheduled_task(task_id)
+    if not task or int(task["conversation_id"]) != int(conversation_id):
+        return "Task not found."
+    db.delete_scheduled_task(task_id)
+    task_scheduler.remove_task(task_id)
+    return f"Task {task_id} deleted."
+
+
+def _tool_task_enable(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    task_id = args.get("task_id")
+    enabled = args.get("enabled")
+    if not isinstance(task_id, int):
+        return "Provide a valid task_id."
+    if not isinstance(enabled, bool):
+        return "Provide enabled=true or false."
+    task = db.get_scheduled_task(task_id)
+    if not task or int(task["conversation_id"]) != int(conversation_id):
+        return "Task not found."
+    db.set_scheduled_task_enabled(task_id, enabled)
+    if enabled:
+        task_scheduler.schedule_task_by_id(task_id, settings)
+    else:
+        task_scheduler.remove_task(task_id)
+    state = "enabled" if enabled else "disabled"
+    return f"Task {task_id} {state}."
 
 
 def _tool_rag_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
