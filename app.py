@@ -2,15 +2,25 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List
+import json
 import re
-from urllib.parse import urlparse, quote
+import time
+from urllib.parse import quote
 import sqlite3
 import threading
+import warnings
+
+warnings.filterwarnings(
+    "ignore",
+    message="Valid config keys have changed in V2:",
+    category=UserWarning,
+)
 
 from dotenv import load_dotenv
 from flask import abort, send_from_directory, request, jsonify
+import requests
 import dash
-from dash import dcc, html, dash_table, Input, Output, State, no_update, ALL
+from dash import dcc, html, dash_table, Input, Output, State, no_update, ALL, MATCH
 
 from jacques import db
 from jacques.config import (
@@ -21,7 +31,7 @@ from jacques.config import (
     Settings,
     ensure_dirs,
 )
-from jacques.services import assistant, doc_ingest, file_ops, pdf_tools, rag, vision, web_search
+from jacques.services import assistant, doc_ingest, file_ops, pdf_tools, rag, vision
 from jacques.utils import decode_upload, safe_filename
 
 
@@ -158,25 +168,6 @@ def _file_item(label: str, name: str, detail: str, item_id: dict) -> html.Button
     )
 
 
-def _render_assets_row(conversation_id: int, limit: int = 8):
-    docs = db.list_documents(conversation_id)
-    images = db.list_images(conversation_id)
-
-    items = []
-    for doc in docs[:limit]:
-        label, kind = _doc_label(doc["doc_type"])
-        items.append(_asset_pill(label, doc["name"], kind))
-
-    remaining = limit - len(items)
-    if remaining > 0:
-        for img in images[:remaining]:
-            items.append(_asset_pill("IMG", img["name"], "img"))
-
-    if not items:
-        return html.Div("Drop files here to attach context.", className="status")
-    return html.Div(items, className="asset-row")
-
-
 def _stream_response(
     conversation_id: int,
     user_message: str,
@@ -212,6 +203,9 @@ def _stream_response(
             db.update_message_content(assistant_message_id, reply)
         elif not streamed:
             db.update_message_content(assistant_message_id, "No response generated.")
+        assistant.maybe_update_conversation_title(
+            conversation_id, settings, force_first=True
+        )
         _set_streaming(conversation_id, False)
 
 
@@ -236,43 +230,6 @@ def _maybe_delete_file(path: str, table: str) -> None:
         file_path.unlink()
 
 
-def _parse_sources_from_tool(content: str) -> list[dict[str, str]]:
-    sources: list[dict[str, str]] = []
-    for line in content.splitlines():
-        line = line.strip()
-        if not line.startswith("- ["):
-            continue
-        match = re.search(r"\\[(.*?)\\]\\((.*?)\\)", line)
-        if not match:
-            continue
-        title = match.group(1).strip()
-        url = match.group(2).strip()
-        snippet = line[match.end() :].lstrip(" —-").strip()
-        sources.append({"title": title, "url": url, "snippet": snippet})
-    return sources
-
-
-def _source_domain(url: str) -> str:
-    if not url:
-        return ""
-    parsed = urlparse(url)
-    host = parsed.netloc or parsed.path.split("/")[0]
-    return host.replace("www.", "")
-
-
-def _empty_source_preview():
-    return [
-        html.Div(
-            className="preview-header",
-            children=[
-                html.Div("Source preview", className="preview-title"),
-                html.Button("Clear", id="clear-source-preview", className="icon-btn"),
-            ],
-        ),
-        html.Div("Select a source to preview.", className="preview-empty"),
-    ]
-
-
 def _data_url(path: str) -> str:
     if not path:
         return ""
@@ -281,7 +238,17 @@ def _data_url(path: str) -> str:
         relative = resolved.relative_to(DATA_DIR)
     except ValueError:
         return ""
-    return f"/files/{relative.as_posix()}"
+    return f"/files/{quote(relative.as_posix(), safe='/')}"
+
+
+def _absolute_file_url(path: str) -> str:
+    relative = _data_url(path)
+    if not relative:
+        return ""
+    base = (settings.app_base_url or "").rstrip("/")
+    if not base:
+        return relative
+    return f"{base}{relative}"
 
 
 def _load_word_text(path: Path) -> str:
@@ -292,6 +259,74 @@ def _load_word_text(path: Path) -> str:
     doc = Document(str(path))
     lines = [para.text for para in doc.paragraphs]
     return "\n".join(lines).strip()
+
+
+def _format_word_preview(path: Path) -> str:
+    try:
+        from docx import Document
+    except ImportError as exc:
+        raise RuntimeError("python-docx is required for Word editing") from exc
+    doc = Document(str(path))
+    lines = []
+    for idx, para in enumerate(doc.paragraphs, start=1):
+        text = para.text.strip()
+        if text:
+            lines.append(f"{idx}. {text}")
+    return "\n".join(lines).strip() or "No text content found."
+
+
+def _format_word_preview_html(path: Path) -> str:
+    try:
+        import mammoth
+    except ImportError:
+        return ""
+    with path.open("rb") as docx_file:
+        result = mammoth.convert_to_html(docx_file)
+    html_body = (result.value or "").strip()
+    if not html_body:
+        return ""
+    return f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {{
+        font-family: "Times New Roman", serif;
+        color: #111;
+        background: #fff;
+        padding: 20px 24px;
+        line-height: 1.5;
+      }}
+      h1, h2, h3, h4, h5, h6 {{
+        font-family: "Times New Roman", serif;
+        margin: 0 0 0.6em;
+      }}
+      p {{
+        margin: 0 0 0.85em;
+      }}
+      table {{
+        border-collapse: collapse;
+        width: 100%;
+        margin: 0 0 1em;
+      }}
+      td, th {{
+        border: 1px solid #ddd;
+        padding: 6px 8px;
+      }}
+    </style>
+  </head>
+  <body>
+    {html_body}
+  </body>
+</html>"""
+
+
+def _render_word_preview(path: Path):
+    html_doc = _format_word_preview_html(path)
+    if html_doc:
+        return html.Iframe(srcDoc=html_doc, className="docx-frame")
+    preview = _format_word_preview(path)
+    return html.Pre(preview, className="file-preview")
 
 
 def _load_table_data(path: Path, sheet_name: str | None = None):
@@ -315,6 +350,15 @@ def _load_table_data(path: Path, sheet_name: str | None = None):
     return df, sheets
 
 
+def _coerce_cell_value(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
+
+
 default_convo_id = _ensure_default_conversation()
 
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
@@ -335,6 +379,161 @@ def serve_files(asset_path: str):
         abort(404)
     return send_from_directory(DATA_DIR, safe_path.as_posix())
 
+
+@app.server.route("/pdf_highlight", methods=["POST"])
+def handle_pdf_highlight():
+    payload = request.get_json(silent=True) or {}
+    doc_id = int(payload.get("doc_id") or 0)
+    text = str(payload.get("text") or "").strip()
+    page_number = payload.get("page")
+    page_value = None
+    if page_number is not None and str(page_number).strip():
+        try:
+            page_value = int(page_number)
+        except ValueError:
+            page_value = None
+
+    if not doc_id or not text:
+        return jsonify({"success": False, "message": "Missing highlight data."}), 400
+    doc = db.get_document_by_id(doc_id)
+    if not doc:
+        return jsonify({"success": False, "message": "Document not found."}), 404
+    path = Path(doc["path"]).resolve()
+    if path.suffix.lower() != ".pdf":
+        return jsonify({"success": False, "message": "Not a PDF file."}), 400
+    if DATA_DIR not in path.parents:
+        return jsonify({"success": False, "message": "Invalid file path."}), 400
+
+    try:
+        count = pdf_tools.highlight_text(path, text, page_value)
+    except Exception as exc:
+        return jsonify({"success": False, "message": f"Highlight failed: {exc}"}), 500
+
+    if count == 0:
+        return jsonify(
+            {"success": False, "message": "No matching text found."}
+        ), 200
+
+    db.add_pdf_highlight(doc_id, page_value, text)
+    try:
+        rag.build_index(int(doc["conversation_id"]))
+    except Exception:
+        pass
+
+    return jsonify(
+        {"success": True, "message": f"Highlighted {count} match(es)."}
+    )
+
+
+@app.server.route("/onlyoffice/<int:doc_id>")
+def onlyoffice_editor(doc_id: int):
+    if not settings.onlyoffice_url:
+        abort(404)
+    doc = db.get_document_by_id(doc_id)
+    if not doc:
+        abort(404)
+
+    path = Path(doc["path"])
+    if not path.exists():
+        abort(404)
+
+    file_url = _absolute_file_url(doc["path"])
+    if not file_url:
+        abort(404)
+
+    file_type = path.suffix.lstrip(".").lower()
+    key_seed = f"{doc_id}-{int(path.stat().st_mtime)}-{path.name}"
+    key = str(abs(hash(key_seed)))
+    callback_url = f"{settings.app_base_url.rstrip('/')}/onlyoffice_callback?doc_id={doc_id}"
+
+    config = {
+        "document": {
+            "fileType": file_type,
+            "key": key,
+            "title": doc["name"],
+            "url": file_url,
+        },
+        "editorConfig": {
+            "mode": "edit",
+            "callbackUrl": callback_url,
+        },
+    }
+
+    token_script = ""
+    if settings.onlyoffice_jwt:
+        try:
+            import jwt
+        except ImportError:
+            return (
+                "PyJWT is required for ONLYOFFICE_JWT. Install PyJWT.",
+                500,
+            )
+        token = jwt.encode(config, settings.onlyoffice_jwt, algorithm="HS256")
+        if isinstance(token, bytes):
+            token = token.decode("utf-8")
+        config["token"] = token
+        token_script = f'var token = "{token}";'
+
+    docserver = settings.onlyoffice_url.rstrip("/")
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{doc["name"]}</title>
+    <style>
+      html, body {{
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #0f141b;
+      }}
+      #editor {{
+        height: 100%;
+        width: 100%;
+      }}
+    </style>
+  </head>
+  <body>
+    <div id="editor"></div>
+    <script src="{docserver}/web-apps/apps/api/documents/api.js"></script>
+    <script>
+      {token_script}
+      var config = {json.dumps(config)};
+      var docEditor = new DocsAPI.DocEditor("editor", config);
+    </script>
+  </body>
+</html>"""
+    return html, 200, {"Content-Type": "text/html"}
+
+
+@app.server.route("/onlyoffice_callback", methods=["POST"])
+def onlyoffice_callback():
+    payload = request.get_json(silent=True) or {}
+    status = payload.get("status")
+    download_url = payload.get("url")
+    doc_id = request.args.get("doc_id")
+    if not doc_id:
+        return jsonify({"error": 0})
+    try:
+        doc_id_int = int(doc_id)
+    except ValueError:
+        return jsonify({"error": 0})
+
+    if status in {2, 6} and download_url:
+        doc = db.get_document_by_id(doc_id_int)
+        if doc:
+            path = Path(doc["path"])
+            try:
+                response = requests.get(download_url, timeout=settings.web_timeout)
+                response.raise_for_status()
+                path.write_bytes(response.content)
+                text = doc_ingest.extract_text(path)
+                db.update_document_text(doc_id_int, text)
+                rag.build_index(int(doc["conversation_id"]))
+            except Exception:
+                pass
+    return jsonify({"error": 0})
+
 app.layout = html.Div(
     id="theme-root",
     className="app-shell",
@@ -347,9 +546,9 @@ app.layout = html.Div(
             id="stream-state",
             data={"convo_id": str(default_convo_id), "is_streaming": False},
         ),
-        dcc.Store(id="sources-data", data=[]),
         dcc.Store(id="settings-open", data=False),
         dcc.Store(id="active-file", data=None),
+        dcc.Store(id="scroll-trigger", data=0),
         dcc.Interval(id="stream-interval", interval=120, n_intervals=0),
         html.Div(
             className="sidebar",
@@ -362,22 +561,29 @@ app.layout = html.Div(
                             className="section-header",
                             children=[
                                 html.H3("Conversations"),
-                                html.Button(
-                                    "SYS",
-                                    id="open-settings-btn",
-                                    className="icon-btn",
-                                    **{
-                                        "data-tooltip": "System prompt & global memory."
-                                    },
+                                html.Div(
+                                    className="section-actions",
+                                    children=[
+                                        html.Button(
+                                            "+",
+                                            id="new-convo-btn",
+                                            className="icon-btn icon-btn--add",
+                                            **{
+                                                "data-tooltip": "New conversation."
+                                            },
+                                        ),
+                                        html.Button(
+                                            "SYS",
+                                            id="open-settings-btn",
+                                            className="icon-btn",
+                                            **{
+                                                "data-tooltip": "System prompt & global memory."
+                                            },
+                                        ),
+                                    ],
                                 ),
                             ],
                         ),
-                        dcc.Input(
-                            id="new-convo-title",
-                            placeholder="New conversation title",
-                            type="text",
-                        ),
-                        html.Button("Create", id="new-convo-btn"),
                         dcc.RadioItems(
                             id="convo-dropdown",
                             options=_conversation_options(),
@@ -394,7 +600,48 @@ app.layout = html.Div(
                 html.Div(
                     className="chat-header",
                     children=[
-                        html.Div(id="chat-title", className="chat-title"),
+                        html.Div(
+                            className="chat-title-block",
+                            children=[
+                                html.Div(
+                                    className="chat-title-row",
+                                    children=[
+                                        html.Div(
+                                            id="chat-title", className="chat-title"
+                                        ),
+                                        html.Button(
+                                            "✎",
+                                            id="edit-title-btn",
+                                            className="icon-btn icon-btn--edit",
+                                            **{
+                                                "data-tooltip": "Rename conversation."
+                                            },
+                                        ),
+                                    ],
+                                ),
+                                html.Div(
+                                    id="title-edit-row",
+                                    className="title-edit-row",
+                                    children=[
+                                        dcc.Input(
+                                            id="title-edit-input",
+                                            type="text",
+                                            placeholder="New title",
+                                        ),
+                                        html.Button(
+                                            "Save",
+                                            id="save-title-btn",
+                                            className="icon-btn",
+                                        ),
+                                        html.Button(
+                                            "Cancel",
+                                            id="cancel-title-btn",
+                                            className="icon-btn",
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
                         html.Div(
                             className="header-actions",
                             children=[
@@ -420,7 +667,6 @@ app.layout = html.Div(
                                     className="input-panel",
                                     children=[
                                         html.Div(id="tool-status", className="tool-status"),
-                                        html.Div(id="asset-row"),
                                         dcc.Upload(
                                             id="upload-assets",
                                             className="upload-wrap",
@@ -456,41 +702,9 @@ app.layout = html.Div(
                         html.Div(
                             className="side-panel",
                             children=[
-                                dcc.Tabs(
-                                    id="side-tabs",
-                                    value="sources",
-                                    className="side-tabs",
-                                    children=[
-                                        dcc.Tab(
-                                            label="Sources",
-                                            value="sources",
-                                            className="side-tab",
-                                            selected_className="side-tab side-tab--active",
-                                            children=[
-                                                html.Div(
-                                                    id="sources-list",
-                                                    className="sources-list",
-                                                ),
-                                                html.Div(
-                                                    id="source-preview",
-                                                    className="source-preview",
-                                                    children=_empty_source_preview(),
-                                                ),
-                                            ],
-                                        ),
-                                        dcc.Tab(
-                                            label="Fichiers",
-                                            value="files",
-                                            className="side-tab",
-                                            selected_className="side-tab side-tab--active",
-                                            children=[
-                                                html.Div(
-                                                    id="files-list",
-                                                    className="files-list",
-                                                )
-                                            ],
-                                        ),
-                                    ],
+                                html.Div(
+                                    id="files-list",
+                                    className="files-list",
                                 )
                             ],
                         ),
@@ -600,17 +814,15 @@ app.layout = html.Div(
 @app.callback(
     Output("convo-dropdown", "options", allow_duplicate=True),
     Output("convo-dropdown", "value", allow_duplicate=True),
-    Output("new-convo-title", "value"),
     Input("new-convo-btn", "n_clicks"),
-    State("new-convo-title", "value"),
     prevent_initial_call=True,
 )
-def create_conversation(n_clicks: int, title: str | None):
+def create_conversation(n_clicks: int):
     if not n_clicks:
-        return no_update, no_update, no_update
-    clean_title = (title or "").strip() or f"Conversation {len(db.list_conversations()) + 1}"
+        return no_update, no_update
+    clean_title = f"Conversation {len(db.list_conversations()) + 1}"
     convo_id = db.create_conversation(clean_title)
-    return _conversation_options(), str(convo_id), ""
+    return _conversation_options(), str(convo_id)
 
 
 @app.callback(
@@ -626,6 +838,61 @@ def refresh_chat(convo_id: str | None, refresh: int):
     rows = db.get_messages(int(convo_id))
     title = conversation["title"] if conversation else "Conversation"
     return _render_messages(rows), title
+
+
+@app.callback(
+    Output("convo-dropdown", "options", allow_duplicate=True),
+    Input("chat-refresh", "data"),
+    prevent_initial_call=True,
+)
+def refresh_conversation_options(refresh_value: int):
+    return _conversation_options()
+
+
+@app.callback(
+    Output("title-edit-row", "className"),
+    Output("title-edit-input", "value"),
+    Output("chat-refresh", "data", allow_duplicate=True),
+    Output("convo-dropdown", "options", allow_duplicate=True),
+    Input("edit-title-btn", "n_clicks"),
+    Input("cancel-title-btn", "n_clicks"),
+    Input("save-title-btn", "n_clicks"),
+    Input("convo-dropdown", "value"),
+    State("title-edit-input", "value"),
+    State("chat-refresh", "data"),
+    prevent_initial_call=True,
+)
+def edit_conversation_title(
+    edit_clicks: int | None,
+    cancel_clicks: int | None,
+    save_clicks: int | None,
+    convo_id: str | None,
+    new_title: str | None,
+    refresh_value: int,
+):
+    trigger = dash.callback_context.triggered_id
+    if trigger == "edit-title-btn":
+        if not convo_id:
+            return "title-edit-row", "", no_update, no_update
+        conversation = db.get_conversation(int(convo_id))
+        title = conversation["title"] if conversation else ""
+        return "title-edit-row title-edit-row--open", title, no_update, no_update
+    if trigger in {"cancel-title-btn", "convo-dropdown"}:
+        return "title-edit-row", "", no_update, no_update
+    if trigger == "save-title-btn":
+        if not convo_id:
+            return "title-edit-row", "", no_update, no_update
+        title = (new_title or "").strip()
+        if not title:
+            return "title-edit-row", "", no_update, no_update
+        db.update_conversation_title(int(convo_id), title, auto_title=False)
+        return (
+            "title-edit-row",
+            "",
+            (refresh_value or 0) + 1,
+            _conversation_options(),
+        )
+    return "title-edit-row", "", no_update, no_update
 
 
 @app.callback(
@@ -690,6 +957,9 @@ def send_message(
         on_tool_event=on_tool_event,
     )
     db.add_message(conversation_id, "assistant", reply)
+    assistant.maybe_update_conversation_title(
+        conversation_id, settings, force_first=True
+    )
     return refresh_value + 1, "Response generated.", ""
 
 
@@ -756,62 +1026,6 @@ def upload_assets(contents_list, filenames, convo_id, docs_refresh, images_refre
 
 
 @app.callback(
-    Output("asset-row", "children"),
-    Input("docs-refresh", "data"),
-    Input("images-refresh", "data"),
-    Input("convo-dropdown", "value"),
-)
-def refresh_assets(docs_refresh: int, images_refresh: int, convo_id: str | None):
-    if not convo_id:
-        return html.Div("No conversation selected.", className="status")
-    return _render_assets_row(int(convo_id))
-
-
-@app.callback(
-    Output("sources-data", "data"),
-    Output("sources-list", "children"),
-    Input("chat-refresh", "data"),
-    Input("stream-interval", "n_intervals"),
-    State("convo-dropdown", "value"),
-)
-def refresh_sources(refresh_value: int, n_intervals: int, convo_id: str | None):
-    if not convo_id:
-        return [], ""
-    row = db.get_latest_web_search_message(int(convo_id))
-    if not row:
-        return [], ""
-    sources = _parse_sources_from_tool(row["content"] or "")
-    if not sources:
-        return [], ""
-
-    items = []
-    for idx, source in enumerate(sources):
-        title = source.get("title") or _source_domain(source.get("url", "")) or "Source"
-        domain = _source_domain(source.get("url", ""))
-        snippet = source.get("snippet") or ""
-        items.append(
-            html.Button(
-                children=[
-                    html.Div(title, className="source-title"),
-                    html.Div(domain, className="source-domain"),
-                    html.Div(snippet, className="source-snippet"),
-                ],
-                id={"type": "source-item", "index": idx},
-                n_clicks=0,
-                className="source-item",
-            )
-        )
-
-    return sources, html.Div(
-        [
-            html.Div("Sources", className="sources-title"),
-            html.Div(items, className="sources-items"),
-        ],
-        className="sources-block",
-    )
-
-
-@app.callback(
     Output("files-list", "children"),
     Input("docs-refresh", "data"),
     Input("images-refresh", "data"),
@@ -829,11 +1043,12 @@ def refresh_files(docs_refresh: int, images_refresh: int, convo_id: str | None):
     items = []
     for doc in docs:
         label, kind = _doc_label(doc["doc_type"])
+        detail = doc["doc_type"].lstrip(".").upper()
         items.append(
             _file_item(
                 label,
                 doc["name"],
-                doc["doc_type"].upper(),
+                detail,
                 {"type": "file-item", "index": f"doc-{doc['id']}"},
             )
         )
@@ -850,7 +1065,7 @@ def refresh_files(docs_refresh: int, images_refresh: int, convo_id: str | None):
 
     return html.Div(
         [
-            html.Div("Files", className="sources-title"),
+            html.Div("Fichiers", className="sources-title"),
             html.Div(items, className="files-items"),
         ],
         className="files-block",
@@ -918,6 +1133,12 @@ def render_file_offcanvas(active_file: dict | None):
     kind = active_file.get("kind")
     path_str = active_file.get("path") or ""
     path = Path(path_str)
+    if path_str and not path.exists():
+        return (
+            "offcanvas offcanvas--open",
+            name,
+            html.Div("File not found on disk.", className="status"),
+        )
 
     if kind == "img":
         url = _data_url(path_str)
@@ -933,9 +1154,13 @@ def render_file_offcanvas(active_file: dict | None):
     doc_type = (active_file.get("doc_type") or path.suffix).lower()
     if doc_type == ".pdf":
         file_url = _data_url(path_str)
-        iframe_src = f"/assets/pdf_viewer.html?file={quote(file_url)}&doc_id={active_file.get('id')}"
+        iframe_src = f"/assets/pdf_viewer.html?file={file_url}&doc_id={active_file.get('id')}"
         body = html.Div(
             [
+                html.Div(
+                    "Select text in the PDF and click Highlight selection.",
+                    className="status",
+                ),
                 html.Iframe(src=iframe_src, className="pdf-frame"),
             ],
             className="file-viewer",
@@ -943,20 +1168,60 @@ def render_file_offcanvas(active_file: dict | None):
         return "offcanvas offcanvas--open", name, body
 
     if doc_type == ".docx":
+        if settings.onlyoffice_url:
+            iframe_src = f"/onlyoffice/{active_file.get('id')}"
+            body = html.Div(
+                [
+                    html.Div(
+                        "OnlyOffice editor actif.",
+                        className="status",
+                    ),
+                    html.Iframe(src=iframe_src, className="office-frame"),
+                ],
+                className="file-viewer",
+            )
+            return "offcanvas offcanvas--open", name, body
+
         try:
-            text = _load_word_text(path)
-            status = ""
+            preview_component = _render_word_preview(path)
+            status = (
+                "OnlyOffice non configure. Le rendu peut differer du document."
+            )
         except Exception as exc:
-            text = ""
+            preview_component = html.Pre("", className="file-preview")
             status = f"Word load failed: {exc}"
+        doc_id = active_file.get("id")
         body = html.Div(
             [
+                html.Div("Preview (read-only)", className="field-label"),
+                preview_component,
+                html.Div("Append paragraph", className="field-label"),
                 dcc.Textarea(
-                    id="word-editor",
-                    value=text,
-                    className="file-textarea",
+                    id={"type": "word-input", "name": "append", "doc": doc_id},
+                    className="file-textarea file-textarea--compact",
+                    placeholder="New paragraph text",
                 ),
-                html.Button("Save changes", id="save-word-btn", className="send-btn"),
+                html.Button(
+                    "Append",
+                    id={"type": "word-action", "name": "append", "doc": doc_id},
+                    className="send-btn",
+                ),
+                html.Div("Find and replace", className="field-label"),
+                dcc.Input(
+                    id={"type": "word-input", "name": "find", "doc": doc_id},
+                    type="text",
+                    placeholder="Find text",
+                ),
+                dcc.Input(
+                    id={"type": "word-input", "name": "replace", "doc": doc_id},
+                    type="text",
+                    placeholder="Replace with",
+                ),
+                html.Button(
+                    "Replace",
+                    id={"type": "word-action", "name": "replace", "doc": doc_id},
+                    className="send-btn",
+                ),
                 html.Div(status, className="status"),
             ],
             className="file-editor",
@@ -964,6 +1229,20 @@ def render_file_offcanvas(active_file: dict | None):
         return "offcanvas offcanvas--open", name, body
 
     if doc_type in {".xlsx", ".xls", ".xlsm", ".csv"}:
+        if doc_type != ".csv" and settings.onlyoffice_url:
+            iframe_src = f"/onlyoffice/{active_file.get('id')}"
+            body = html.Div(
+                [
+                    html.Div(
+                        "OnlyOffice editor actif.",
+                        className="status",
+                    ),
+                    html.Iframe(src=iframe_src, className="office-frame"),
+                ],
+                className="file-viewer",
+            )
+            return "offcanvas offcanvas--open", name, body
+
         sheet_value = None
         try:
             df, sheets = _load_table_data(path)
@@ -979,14 +1258,16 @@ def render_file_offcanvas(active_file: dict | None):
         if df is None:
             body = html.Div(status, className="status")
         else:
-            df = df.fillna("")
-            columns = [{"name": col, "id": col} for col in df.columns]
+            df = df.where(df.notna(), "")
+            columns = [{"name": str(col), "id": str(col)} for col in df.columns]
+            doc_id = active_file.get("id")
             table = dash_table.DataTable(
-                id="excel-editor",
+                id={"type": "excel-editor", "doc": doc_id},
                 data=df.to_dict("records"),
                 columns=columns,
                 editable=True,
                 page_size=12,
+                selected_cells=[],
                 style_table={"overflowX": "auto"},
                 style_cell={
                     "minWidth": "120px",
@@ -998,7 +1279,7 @@ def render_file_offcanvas(active_file: dict | None):
             sheet_select = ""
             if sheets:
                 sheet_select = dcc.Dropdown(
-                    id="sheet-selector",
+                    id={"type": "excel-sheet", "doc": doc_id},
                     options=[{"label": sheet, "value": sheet} for sheet in sheets],
                     value=sheet_value,
                     clearable=False,
@@ -1007,8 +1288,22 @@ def render_file_offcanvas(active_file: dict | None):
             body = html.Div(
                 [
                     sheet_select,
+                    dcc.Store(id={"type": "excel-selection", "doc": doc_id}, data=""),
                     table,
-                    html.Button("Save changes", id="save-table-btn", className="send-btn"),
+                    html.Div(
+                        id={"type": "excel-preview", "doc": doc_id},
+                        className="status",
+                    ),
+                    html.Button(
+                        "Envoyer la selection au chat",
+                        id={"type": "excel-action", "name": "send-selection", "doc": doc_id},
+                        className="icon-btn",
+                    ),
+                    html.Button(
+                        "Save changes",
+                        id={"type": "excel-action", "name": "save", "doc": doc_id},
+                        className="send-btn",
+                    ),
                     html.Div(status, className="status"),
                 ],
                 className="file-editor",
@@ -1021,9 +1316,9 @@ def render_file_offcanvas(active_file: dict | None):
 
 
 @app.callback(
-    Output("excel-editor", "data"),
-    Output("excel-editor", "columns"),
-    Input("sheet-selector", "value"),
+    Output({"type": "excel-editor", "doc": MATCH}, "data"),
+    Output({"type": "excel-editor", "doc": MATCH}, "columns"),
+    Input({"type": "excel-sheet", "doc": MATCH}, "value"),
     State("active-file", "data"),
     prevent_initial_call=True,
 )
@@ -1035,36 +1330,93 @@ def switch_excel_sheet(sheet_name: str | None, active_file: dict | None):
         df, _ = _load_table_data(path, sheet_name=sheet_name)
     except Exception:
         return no_update, no_update
-    df = df.fillna("")
-    columns = [{"name": col, "id": col} for col in df.columns]
+    df = df.where(df.notna(), "")
+    columns = [{"name": str(col), "id": str(col)} for col in df.columns]
     return df.to_dict("records"), columns
 
 
 @app.callback(
-    Output("file-save-status", "children"),
+    Output({"type": "excel-selection", "doc": MATCH}, "data"),
+    Output({"type": "excel-preview", "doc": MATCH}, "children"),
+    Input({"type": "excel-editor", "doc": MATCH}, "selected_cells"),
+    State({"type": "excel-editor", "doc": MATCH}, "data"),
+    State({"type": "excel-editor", "doc": MATCH}, "columns"),
+    prevent_initial_call=True,
+)
+def update_excel_selection(
+    selected_cells: list[dict] | None,
+    table_data: list[dict] | None,
+    table_columns: list[dict] | None,
+):
+    if not selected_cells:
+        return "", "Aucune selection."
+    if len(selected_cells) > 200:
+        return "", "Selection trop grande (max 200 cellules)."
+
+    data = table_data or []
+    columns = [col["id"] for col in (table_columns or [])]
+    lines = []
+    for cell in selected_cells:
+        row_idx = int(cell.get("row", 0))
+        col_id = cell.get("column_id")
+        value = ""
+        if 0 <= row_idx < len(data):
+            value = data[row_idx].get(col_id, "")
+        lines.append(f"R{row_idx + 2} {col_id}: {value}")
+    text = "Excel selection:\n" + "\n".join(lines)
+    preview = f"{len(selected_cells)} cellules selectionnees."
+    return text, preview
+
+
+@app.callback(
+    Output("user-input", "value", allow_duplicate=True),
+    Input({"type": "excel-action", "name": "send-selection", "doc": ALL}, "n_clicks"),
+    State({"type": "excel-selection", "doc": ALL}, "data"),
+    State({"type": "excel-selection", "doc": ALL}, "id"),
+    State("user-input", "value"),
+    prevent_initial_call=True,
+)
+def send_excel_selection(
+    n_clicks: list[int] | None,
+    selection_texts: list[str] | None,
+    selection_ids: list[dict] | None,
+    current_text: str | None,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger or not isinstance(trigger, dict):
+        return no_update
+    doc_id = trigger.get("doc")
+    selection_text = ""
+    for item_id, text in zip(selection_ids or [], selection_texts or []):
+        if item_id.get("doc") == doc_id:
+            selection_text = text or ""
+            break
+    if not selection_text:
+        return no_update
+    current = current_text or ""
+    prefix = "\n\n" if current.strip() else ""
+    return f"{current}{prefix}{selection_text}\n"
+
+
+@app.callback(
+    Output("file-save-status", "children", allow_duplicate=True),
     Output("docs-refresh", "data", allow_duplicate=True),
-    Input("save-word-btn", "n_clicks"),
-    Input("save-table-btn", "n_clicks"),
-    State("word-editor", "value"),
-    State("excel-editor", "data"),
-    State("excel-editor", "columns"),
-    State("sheet-selector", "value"),
+    Input({"type": "word-action", "name": ALL, "doc": ALL}, "n_clicks"),
+    State({"type": "word-input", "name": ALL, "doc": ALL}, "value"),
+    State({"type": "word-input", "name": ALL, "doc": ALL}, "id"),
     State("active-file", "data"),
     State("docs-refresh", "data"),
     prevent_initial_call=True,
 )
-def save_file_edits(
-    save_word: int | None,
-    save_table: int | None,
-    word_text: str | None,
-    table_data: list[dict] | None,
-    table_columns: list[dict] | None,
-    sheet_name: str | None,
+def save_word_edits(
+    clicks: list[int] | None,
+    input_values: list[str] | None,
+    input_ids: list[dict] | None,
     active_file: dict | None,
     docs_refresh: int,
 ):
     trigger = dash.callback_context.triggered_id
-    if not active_file or not trigger:
+    if not active_file or not trigger or not isinstance(trigger, dict):
         return no_update, no_update
     if active_file.get("kind") != "doc":
         return "Only documents can be edited.", no_update
@@ -1076,31 +1428,113 @@ def save_file_edits(
 
     path = Path(doc_row["path"])
     doc_type = (doc_row["doc_type"] or path.suffix).lower()
+    if doc_type != ".docx":
+        return "This file is not a Word document.", no_update
+
+    values = {}
+    for item_id, value in zip(input_ids or [], input_values or []):
+        name = item_id.get("name")
+        values[name] = value
 
     try:
-        if trigger == "save-word-btn":
-            if doc_type != ".docx":
-                return "This file is not a Word document.", no_update
-            file_ops.write_word(path, word_text or "")
-        elif trigger == "save-table-btn":
-            if doc_type not in {".xlsx", ".xls", ".xlsm", ".csv"}:
-                return "This file is not a table.", no_update
+        action = trigger.get("name")
+        if action == "append":
+            text = (values.get("append") or "").strip()
+            if not text:
+                return "Provide text to append.", no_update
+            file_ops.append_paragraph(path, text)
+        elif action == "replace":
+            old = (values.get("find") or "").strip()
+            if not old:
+                return "Provide text to find.", no_update
+            file_ops.replace_text(path, old, values.get("replace") or "")
+        else:
+            return no_update, no_update
+    except Exception as exc:
+        return f"Save failed: {exc}", no_update
+
+    try:
+        text = doc_ingest.extract_text(path)
+        db.update_document_text(doc_id, text)
+        rag.build_index(int(doc_row["conversation_id"]))
+    except Exception:
+        pass
+
+    return "Saved changes.", (docs_refresh or 0) + 1
+
+
+@app.callback(
+    Output("file-save-status", "children", allow_duplicate=True),
+    Output("docs-refresh", "data", allow_duplicate=True),
+    Input({"type": "excel-action", "name": "save", "doc": ALL}, "n_clicks"),
+    State({"type": "excel-editor", "doc": ALL}, "data"),
+    State({"type": "excel-editor", "doc": ALL}, "columns"),
+    State({"type": "excel-sheet", "doc": ALL}, "value"),
+    State("active-file", "data"),
+    State("docs-refresh", "data"),
+    prevent_initial_call=True,
+)
+def save_table_edits(
+    save_clicks: list[int] | None,
+    table_data_list: list[list[dict]] | None,
+    table_columns_list: list[list[dict]] | None,
+    sheet_name_list: list[str] | None,
+    active_file: dict | None,
+    docs_refresh: int,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger or not active_file:
+        return no_update, no_update
+    if active_file.get("kind") != "doc":
+        return "Only documents can be edited.", no_update
+
+    doc_id = int(active_file.get("id") or 0)
+    doc_row = db.get_document_by_id(doc_id)
+    if not doc_row:
+        return "Document not found.", no_update
+
+    path = Path(doc_row["path"])
+    doc_type = (doc_row["doc_type"] or path.suffix).lower()
+    if doc_type not in {".xlsx", ".xls", ".xlsm", ".csv"}:
+        return "This file is not a table.", no_update
+
+    table_data = (table_data_list or [None])[0]
+    table_columns = (table_columns_list or [None])[0]
+    sheet_name = (sheet_name_list or [None])[0]
+
+    try:
+        columns = [col["id"] for col in (table_columns or [])]
+        if doc_type == ".csv":
             try:
                 import pandas as pd
             except ImportError as exc:
                 return f"Pandas is required: {exc}", no_update
-            columns = [col["id"] for col in (table_columns or [])]
             df = pd.DataFrame(table_data or [], columns=columns)
-            if doc_type == ".csv":
-                df.to_csv(path, index=False)
-            else:
-                sheet = sheet_name or "Sheet1"
-                with pd.ExcelWriter(
-                    path, engine="openpyxl", mode="a", if_sheet_exists="replace"
-                ) as writer:
-                    df.to_excel(writer, sheet_name=sheet, index=False)
+            df.to_csv(path, index=False)
         else:
-            return no_update, no_update
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path)
+            sheet = sheet_name or workbook.sheetnames[0]
+            if sheet not in workbook.sheetnames:
+                return "Sheet not found.", no_update
+            ws = workbook[sheet]
+            max_cols = len(columns)
+            max_rows = max(ws.max_row, (len(table_data or []) + 1))
+            for col_idx, header in enumerate(columns, start=1):
+                ws.cell(row=1, column=col_idx).value = header
+            for row_idx in range(2, max_rows + 1):
+                row_data = None
+                if table_data and row_idx - 2 < len(table_data):
+                    row_data = table_data[row_idx - 2]
+                for col_idx in range(1, max_cols + 1):
+                    header = columns[col_idx - 1]
+                    if row_data is None:
+                        value = None
+                    else:
+                        value = _coerce_cell_value(row_data.get(header))
+                    ws.cell(row=row_idx, column=col_idx).value = value
+            workbook.save(path)
     except Exception as exc:
         return f"Save failed: {exc}", no_update
 
@@ -1270,73 +1704,6 @@ def refresh_tool_status(refresh_value: int, n_intervals: int, convo_id: str | No
 
 
 @app.callback(
-    Output("source-preview", "children"),
-    Input({"type": "source-item", "index": ALL}, "n_clicks"),
-    Input("clear-source-preview", "n_clicks"),
-    Input("convo-dropdown", "value"),
-    State("sources-data", "data"),
-    prevent_initial_call=True,
-)
-def open_source_preview(
-    source_clicks: list[int],
-    clear_clicks: int | None,
-    convo_id: str | None,
-    sources: list[dict[str, str]],
-):
-    trigger = dash.callback_context.triggered_id
-    if trigger in {"clear-source-preview", "convo-dropdown"}:
-        return _empty_source_preview()
-    if not isinstance(trigger, dict) or trigger.get("type") != "source-item":
-        return _empty_source_preview()
-
-    index = int(trigger.get("index", 0))
-    if not sources or index >= len(sources):
-        return _empty_source_preview()
-
-    source = sources[index]
-    url = source.get("url", "")
-    title = source.get("title") or _source_domain(url) or "Source"
-    snippet = source.get("snippet") or ""
-    preview_text = ""
-    if url:
-        try:
-            preview_text = web_search.fetch_url(url, settings)
-        except Exception as exc:
-            preview_text = f"Preview failed: {exc}"
-    preview_text = preview_text.strip()
-    if preview_text:
-        max_len = 2000
-        if len(preview_text) > max_len:
-            preview_text = preview_text[:max_len].rsplit(" ", 1)[0] + "..."
-
-    return [
-        html.Div(
-            className="preview-header",
-            children=[
-                html.Div(title, className="preview-title"),
-                html.Button(
-                    "Clear",
-                    id="clear-source-preview",
-                    className="icon-btn",
-                ),
-            ],
-        ),
-        html.Div(
-            className="preview-meta",
-            children=[
-                html.A(url, href=url, target="_blank", rel="noreferrer"),
-                html.Span(_source_domain(url), className="preview-domain"),
-            ],
-        ),
-        html.Div(snippet, className="preview-snippet"),
-        html.Div(
-            preview_text or "No preview available.",
-            className="preview-body",
-        ),
-    ]
-
-
-@app.callback(
     Output("chat-refresh", "data", allow_duplicate=True),
     Output("stream-status", "children"),
     Output("stream-state", "data"),
@@ -1367,6 +1734,22 @@ def poll_stream(
     if was_streaming and not is_streaming:
         return (refresh_value or 0) + 1, "", next_state
     return no_update, "", next_state
+
+
+app.clientside_callback(
+    """
+    function(refreshValue, convoId) {
+        const el = document.getElementById("chat-window");
+        if (el) {
+            el.scrollTop = el.scrollHeight;
+        }
+        return Date.now();
+    }
+    """,
+    Output("scroll-trigger", "data"),
+    Input("chat-refresh", "data"),
+    Input("convo-dropdown", "value"),
+)
 
 
 if __name__ == "__main__":

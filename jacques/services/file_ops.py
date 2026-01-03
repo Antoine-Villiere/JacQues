@@ -59,7 +59,12 @@ def append_paragraph(path: Path, text: str) -> Path:
         raise RuntimeError("python-docx is required for Word operations") from exc
 
     doc = Document(str(path))
-    doc.add_paragraph(text)
+    new_paragraph = doc.add_paragraph(text)
+    if len(doc.paragraphs) > 1:
+        try:
+            new_paragraph.style = doc.paragraphs[-2].style
+        except Exception:
+            pass
     doc.save(path)
     return path
 
@@ -72,8 +77,9 @@ def replace_text(path: Path, old: str, new: str) -> Path:
 
     doc = Document(str(path))
     for paragraph in doc.paragraphs:
-        if old in paragraph.text:
-            paragraph.text = paragraph.text.replace(old, new)
+        for run in paragraph.runs:
+            if old in run.text:
+                run.text = run.text.replace(old, new)
     doc.save(path)
     return path
 

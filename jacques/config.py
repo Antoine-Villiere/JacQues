@@ -5,16 +5,24 @@ import os
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-DATA_DIR = BASE_DIR / "data"
+
+load_dotenv(BASE_DIR / ".env")
+load_dotenv(BASE_DIR / ".nev")
+
+_data_dir_env = os.getenv("JACQUES_DATA_DIR")
+if _data_dir_env:
+    data_dir = Path(_data_dir_env).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = (BASE_DIR / data_dir).resolve()
+else:
+    data_dir = Path.home() / ".jacques"
+DATA_DIR = data_dir
 UPLOADS_DIR = DATA_DIR / "uploads"
 IMAGES_DIR = DATA_DIR / "images"
 GENERATED_DIR = DATA_DIR / "generated"
 EXPORTS_DIR = DATA_DIR / "exports"
 RAG_INDEX_DIR = DATA_DIR / "rag_indexes"
 DB_PATH = DATA_DIR / "jacques.db"
-
-load_dotenv(BASE_DIR / ".env")
-load_dotenv(BASE_DIR / ".nev")
 
 
 @dataclass
@@ -81,6 +89,15 @@ class Settings:
     )
     llm_streaming: bool = field(
         default_factory=lambda: os.getenv("LLM_STREAMING", "true").lower() == "true"
+    )
+    app_base_url: str = field(
+        default_factory=lambda: os.getenv("APP_BASE_URL", "http://127.0.0.1:8050")
+    )
+    onlyoffice_url: str | None = field(
+        default_factory=lambda: os.getenv("ONLYOFFICE_URL")
+    )
+    onlyoffice_jwt: str | None = field(
+        default_factory=lambda: os.getenv("ONLYOFFICE_JWT")
     )
 
 

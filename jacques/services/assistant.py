@@ -19,9 +19,13 @@ SYSTEM_PROMPT = (
     "Decide yourself when to update memory: only store stable preferences "
     "or enduring facts the user would expect you to remember. "
     "If unsure, ask first. Use the memory_append tool when appropriate. "
+    "When editing Word/Excel/PDF files, preserve original formatting; "
+    "avoid rewriting entire documents when a targeted edit suffices. "
     "You can generate plots with plot_generate or plot_fred_series and show the image. "
     "For market indices, prefer plot_fred_series (e.g., NASDAQCOM for Nasdaq Composite)."
 )
+
+AUTO_TITLE_INTERVAL = 6
 
 
 def respond(
@@ -48,6 +52,17 @@ def respond(
     )
 
     messages = [{"role": "system", "content": _build_system_prompt()}]
+    if use_rag:
+        rag_context = rag.format_results(
+            rag.search(user_message, settings, conversation_id), max_chars=900
+        )
+        if rag_context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"RAG context:\n{rag_context}",
+                }
+            )
     for row in history_for_llm:
         messages.append({"role": row["role"], "content": row["content"]})
     last_user = (
@@ -104,6 +119,17 @@ def respond_streaming(
     )
 
     messages = [{"role": "system", "content": _build_system_prompt()}]
+    if use_rag:
+        rag_context = rag.format_results(
+            rag.search(user_message, settings, conversation_id), max_chars=900
+        )
+        if rag_context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"RAG context:\n{rag_context}",
+                }
+            )
     for row in history_for_llm:
         messages.append({"role": row["role"], "content": row["content"]})
     last_user = (
@@ -129,6 +155,106 @@ def respond_streaming(
         on_tool_event,
     )
     return reply or "No response generated."
+
+
+def maybe_update_conversation_title(
+    conversation_id: int, settings: Settings, force_first: bool = False
+) -> str | None:
+    conversation = db.get_conversation(conversation_id)
+    if not conversation:
+        return None
+    auto_title = conversation["auto_title"]
+    if auto_title is not None and int(auto_title) == 0:
+        return None
+
+    messages = db.get_messages(conversation_id)
+    user_messages = [row["content"] for row in messages if row["role"] == "user"]
+    assistant_messages = [row["content"] for row in messages if row["role"] == "assistant"]
+    if not user_messages:
+        return None
+
+    should_update = False
+    if force_first and len(user_messages) == 1 and assistant_messages:
+        should_update = True
+    elif len(user_messages) >= 2 and len(user_messages) % AUTO_TITLE_INTERVAL == 0:
+        should_update = True
+
+    if not should_update:
+        return None
+
+    first = (user_messages[0] or "").strip()
+    recent = [msg.strip() for msg in user_messages[-2:] if msg.strip()]
+    if not first and not recent:
+        return None
+
+    title = _generate_conversation_title(first, recent, settings)
+    if not title:
+        return None
+    current = (conversation["title"] or "").strip()
+    if title == current:
+        return None
+
+    db.update_conversation_title(conversation_id, title, auto_title=True)
+    return title
+
+
+def _generate_conversation_title(
+    first: str, recent: list[str], settings: Settings
+) -> str:
+    llm = LLMClient(settings)
+    fallback = _fallback_title(first or (recent[-1] if recent else "Conversation"))
+    if not llm.available():
+        return fallback
+
+    def clip(text: str, limit: int = 320) -> str:
+        cleaned = " ".join(text.split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[:limit].rsplit(" ", 1)[0]
+
+    first_text = clip(first)
+    recent_text = "\n".join(f"- {clip(msg, 220)}" for msg in recent) or "- (none)"
+    prompt = (
+        "Create a short French conversation title (3-6 words). "
+        "Use Title Case, no quotes, no emojis. "
+        "Blend the first topic with the most recent topics.\n\n"
+        f"First topic: {first_text}\n"
+        f"Recent topics:\n{recent_text}\n\n"
+        "Title:"
+    )
+    try:
+        response = llm.chat(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You write short, polished French conversation titles.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            model=settings.text_model,
+            tools=None,
+            stream=False,
+        )
+        raw = str(response.get("content") or "").strip()
+    except Exception:
+        return fallback
+
+    if not raw:
+        return fallback
+
+    title = raw.splitlines()[0].strip().strip('"').strip("'")
+    if len(title) > 60:
+        title = title[:60].rsplit(" ", 1)[0]
+    return title or fallback
+
+
+def _fallback_title(text: str) -> str:
+    cleaned = " ".join(text.split())
+    if not cleaned:
+        return "Conversation"
+    words = cleaned.split()[:6]
+    title = " ".join(words)
+    return title[:60]
 
 
 def _run_tool_loop(

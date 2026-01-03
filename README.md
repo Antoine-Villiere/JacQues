@@ -36,6 +36,9 @@ RAG_TOP_K=4
 MAX_HISTORY_MESSAGES=40
 MAX_TOOL_CALLS=4
 LLM_STREAMING=true
+APP_BASE_URL=http://127.0.0.1:8050
+ONLYOFFICE_URL=http://127.0.0.1:8080
+ONLYOFFICE_JWT=
 ```
 
 Si aucune cle API n'est fournie, Jacques reste utilisable mais repond avec un mode degrade (RAG + contexte).
@@ -43,6 +46,9 @@ Si aucune cle API n'est fournie, Jacques reste utilisable mais repond avec un mo
 `IMAGE_API_KEY` sert a la generation d'images (OpenAI par defaut).
 `BRAVE_API_KEY` active Brave Web Search (remplace DuckDuckGo).
 `LLM_STREAMING=true` active le mode streaming LiteLLM (affichage token par token).
+`APP_BASE_URL` doit etre accessible par OnlyOffice (pour recuperer les fichiers).
+`ONLYOFFICE_URL` pointe vers le Document Server OnlyOffice.
+`ONLYOFFICE_JWT` (optionnel) si votre Document Server utilise JWT.
 
 ## Fonctionnalites
 
@@ -50,6 +56,8 @@ Si aucune cle API n'est fournie, Jacques reste utilisable mais repond avec un mo
 - RAG local avec TF-IDF.
 - Ingestion PDF, Word, Excel, CSV.
 - Modifications Word/Excel via commandes (tools).
+- Edition Word/Excel depuis l'interface (offcanvas fichiers) avec preservation du formatage.
+- Option: viewer/editeur OnlyOffice integre dans l'offcanvas (docx/xlsx/pdf).
 - Upload et analyse d'images (vision optionnelle).
 - Generation d'images (API ou fallback local).
 - Generation de plots via Python (plot_generate, plot_fred_series).
@@ -61,7 +69,10 @@ Si aucune cle API n'est fournie, Jacques reste utilisable mais repond avec un mo
 - Les documents et images sont scopes par conversation (RAG isole par discussion).
 - Streaming token par token dans l'interface (LLM_STREAMING=true).
 - Prompt systeme editable et memoire globale partagee entre conversations.
-- Sources web cliquables avec preview dans un panneau a droite.
+- Sources web cliquables avec preview dans un panneau a droite (onglets Sources/Fichiers).
+- PDF viewer avec surlignage (highlight) qui met a jour le fichier et le RAG.
+  - Word: append + find/replace pour eviter de casser le formatage.
+  - Excel: selection multi-cellules + bouton "Envoyer la selection au chat".
 
 ## Reglages assistant (UI)
 
@@ -90,11 +101,14 @@ Utiliser des commandes slash dans la zone de chat:
 
 ## Dossiers importants
 
-- `data/jacques.db`: base SQLite
-- `data/uploads`: documents ingeres
-- `data/exports`: fichiers Word/Excel crees ou modifies
-- `data/images`: images importees
-- `data/generated`: images generees
+- `${JACQUES_DATA_DIR:-~/.jacques}/jacques.db`: base SQLite
+- `${JACQUES_DATA_DIR:-~/.jacques}/uploads`: documents ingeres
+- `${JACQUES_DATA_DIR:-~/.jacques}/exports`: reserve (legacy)
+- `${JACQUES_DATA_DIR:-~/.jacques}/images`: images importees
+- `${JACQUES_DATA_DIR:-~/.jacques}/generated`: images generees
+
+Par defaut, les donnees (memoire, documents, images) sont stockees dans `~/.jacques`.
+Pour reutiliser un dossier local au repo, definir `JACQUES_DATA_DIR=./data` dans `.env`.
 
 ## Notes
 

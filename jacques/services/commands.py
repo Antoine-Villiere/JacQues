@@ -3,10 +3,10 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
-from ..config import EXPORTS_DIR, GENERATED_DIR, Settings
+from ..config import GENERATED_DIR, Settings, UPLOADS_DIR
 from .. import db
 from ..utils import safe_filename
-from . import file_ops, image_gen, rag, web_search
+from . import doc_ingest, file_ops, image_gen, rag, web_search
 
 
 def handle_command(text: str, settings: Settings, conversation_id: int) -> str | None:
@@ -20,9 +20,9 @@ def handle_command(text: str, settings: Settings, conversation_id: int) -> str |
     if command in {"help", "?"}:
         return _help_text()
     if command == "excel":
-        return _excel_command(args)
+        return _excel_command(args, conversation_id)
     if command == "word":
-        return _word_command(args)
+        return _word_command(args, conversation_id)
     if command == "web":
         return _web_command(args, settings)
     if command in {"img", "image"}:
@@ -51,54 +51,60 @@ def _help_text() -> str:
     )
 
 
-def _excel_command(args: list[str]) -> str:
+def _excel_command(args: list[str], conversation_id: int) -> str:
     if not args:
         return "Usage: /excel <create|add-sheet|set> ..."
     action = args[0]
     if action == "create" and len(args) >= 2:
         filename = safe_filename(args[1])
         sheet = args[2] if len(args) >= 3 else "Sheet1"
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.create_excel(path, sheet)
+        _upsert_document(conversation_id, filename, path)
         return f"Excel created at {path}"
     if action == "add-sheet" and len(args) >= 3:
         filename = safe_filename(args[1])
         sheet = args[2]
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.add_sheet(path, sheet)
+        _refresh_document(conversation_id, filename, path)
         return f"Sheet added to {path}"
     if action == "set" and len(args) >= 5:
         filename = safe_filename(args[1])
         sheet = args[2]
         cell = args[3]
         value = " ".join(args[4:])
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.set_cell(path, sheet, cell, value)
+        _refresh_document(conversation_id, filename, path)
         return f"Cell {cell} updated in {path}"
     return "Usage: /excel create|add-sheet|set ..."
 
 
-def _word_command(args: list[str]) -> str:
+def _word_command(args: list[str], conversation_id: int) -> str:
     if not args:
         return "Usage: /word <create|append|replace> ..."
     action = args[0]
     if action == "create" and len(args) >= 2:
         filename = safe_filename(args[1])
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.create_word(path)
+        _upsert_document(conversation_id, filename, path)
         return f"Word created at {path}"
     if action == "append" and len(args) >= 3:
         filename = safe_filename(args[1])
         text = " ".join(args[2:])
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.append_paragraph(path, text)
+        _refresh_document(conversation_id, filename, path)
         return f"Paragraph appended to {path}"
     if action == "replace" and len(args) >= 4:
         filename = safe_filename(args[1])
         old = args[2]
         new = " ".join(args[3:])
-        path = EXPORTS_DIR / filename
+        path = UPLOADS_DIR / filename
         file_ops.replace_text(path, old, new)
+        _refresh_document(conversation_id, filename, path)
         return f"Replaced text in {path}"
     return "Usage: /word create|append|replace ..."
 
@@ -142,3 +148,26 @@ def _rag_command(args: list[str], conversation_id: int) -> str:
         rag.build_index(conversation_id)
         return "RAG index rebuilt."
     return "Usage: /rag rebuild"
+
+
+def _upsert_document(conversation_id: int, filename: str, path: Path) -> None:
+    try:
+        text = doc_ingest.extract_text(path)
+    except Exception:
+        text = ""
+    existing = db.get_document_by_name(conversation_id, filename)
+    if existing:
+        db.update_document_text(int(existing["id"]), text)
+    else:
+        db.add_document(
+            conversation_id,
+            filename,
+            str(path),
+            path.suffix.lower(),
+            text,
+        )
+    rag.build_index(conversation_id)
+
+
+def _refresh_document(conversation_id: int, filename: str, path: Path) -> None:
+    _upsert_document(conversation_id, filename, path)

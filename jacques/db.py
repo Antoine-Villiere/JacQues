@@ -79,8 +79,15 @@ def init_db() -> None:
             )
             """
         )
+        auto_title_added = _ensure_column(
+            conn, "conversations", "auto_title", "INTEGER"
+        )
         documents_added = _ensure_column(conn, "documents", "conversation_id", "INTEGER")
         images_added = _ensure_column(conn, "images", "conversation_id", "INTEGER")
+        if auto_title_added:
+            conn.execute(
+                "UPDATE conversations SET auto_title = 1 WHERE auto_title IS NULL"
+            )
         if documents_added or images_added:
             convo_id = _latest_conversation_id(conn)
             if convo_id is not None:
@@ -121,8 +128,8 @@ def _latest_conversation_id(conn: sqlite3.Connection) -> int | None:
 def create_conversation(title: str) -> int:
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO conversations (title, created_at) VALUES (?, ?)",
-            (title, _now()),
+            "INSERT INTO conversations (title, created_at, auto_title) VALUES (?, ?, ?)",
+            (title, _now(), 1),
         )
         conn.commit()
         return int(cursor.lastrowid)
@@ -131,7 +138,8 @@ def create_conversation(title: str) -> int:
 def list_conversations() -> list[sqlite3.Row]:
     with get_connection() as conn:
         cursor = conn.execute(
-            "SELECT id, title, created_at FROM conversations ORDER BY created_at DESC"
+            "SELECT id, title, created_at, auto_title FROM conversations "
+            "ORDER BY created_at DESC"
         )
         return list(cursor.fetchall())
 
@@ -139,10 +147,27 @@ def list_conversations() -> list[sqlite3.Row]:
 def get_conversation(conversation_id: int) -> sqlite3.Row | None:
     with get_connection() as conn:
         cursor = conn.execute(
-            "SELECT id, title, created_at FROM conversations WHERE id = ?",
+            "SELECT id, title, created_at, auto_title FROM conversations WHERE id = ?",
             (conversation_id,),
         )
         return cursor.fetchone()
+
+
+def update_conversation_title(
+    conversation_id: int, title: str, auto_title: bool | None = None
+) -> None:
+    with get_connection() as conn:
+        if auto_title is None:
+            conn.execute(
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                (title, conversation_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE conversations SET title = ?, auto_title = ? WHERE id = ?",
+                (title, 1 if auto_title else 0, conversation_id),
+            )
+        conn.commit()
 
 
 def delete_conversation(conversation_id: int) -> None:
@@ -236,6 +261,21 @@ def get_latest_web_search_message(conversation_id: int) -> sqlite3.Row | None:
             WHERE conversation_id = ?
               AND role = 'tool'
               AND content LIKE '%Tool result: **web_search**%'
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (conversation_id,),
+        )
+        return cursor.fetchone()
+
+
+def get_latest_assistant_message(conversation_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, content, created_at
+            FROM messages
+            WHERE conversation_id = ? AND role = 'assistant'
             ORDER BY id DESC
             LIMIT 1
             """,

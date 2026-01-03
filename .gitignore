@@ -2,3 +2,6 @@
 # secrets
 .env
 .env.*
+
+# local data (user documents, db, uploads, generated files)
+data/

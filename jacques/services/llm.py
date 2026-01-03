@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+import litellm
 from litellm import completion
 
 from ..config import Settings
@@ -10,6 +12,7 @@ from ..config import Settings
 class LLMClient:
     def __init__(self, settings: Settings):
         self.settings = settings
+        _ensure_litellm_clients()
 
     def available(self) -> bool:
         return bool(self.settings.litellm_api_key or self.settings.litellm_api_base)
@@ -168,3 +171,18 @@ class LLMClient:
         if hasattr(obj, "dict"):
             return obj.dict()
         return {}
+
+
+_CLIENTS_READY = False
+
+
+def _ensure_litellm_clients() -> None:
+    global _CLIENTS_READY
+    if _CLIENTS_READY:
+        return
+    timeout = httpx.Timeout(60.0)
+    if getattr(litellm, "client_session", None) is None:
+        litellm.client_session = httpx.Client(timeout=timeout)
+    if getattr(litellm, "aclient_session", None) is None:
+        litellm.aclient_session = httpx.AsyncClient(timeout=timeout)
+    _CLIENTS_READY = True
