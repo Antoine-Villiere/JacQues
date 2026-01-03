@@ -554,10 +554,85 @@ button.danger {
   align-items: stretch;
 }
 
+.chat-textarea-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.chat-textarea-wrap textarea {
+  width: 100%;
+}
+
 .input-panel {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  position: relative;
+}
+
+.mention-suggestions {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 12px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.92);
+  position: absolute;
+  right: 10px;
+  top: 10px;
+  width: min(240px, 60vw);
+  max-height: 220px;
+  overflow-y: auto;
+  box-shadow: 0 18px 40px rgba(24, 29, 36, 0.18);
+  z-index: 3;
+}
+
+.mention-suggestions--open {
+  display: flex;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border-radius: 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+}
+
+.mention-item:hover {
+  border-color: var(--accent);
+}
+
+.mention-name {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-tag {
+  font-size: 10px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.app-shell[data-theme="dark"] .mention-suggestions {
+  background: rgba(12, 16, 22, 0.95);
+}
+
+.app-shell[data-theme="dark"] .mention-item {
+  background: rgba(15, 18, 24, 0.8);
 }
 
 .sources-block {
@@ -996,11 +1071,11 @@ button.danger {
 }
 
 .office-frame {
-  border: 1px solid var(--stroke);
-  border-radius: 16px;
+  border: none;
+  border-radius: 0;
   width: 100%;
   height: 75vh;
-  background: #111;
+  background: transparent;
 }
 
 .dash-table-container {
@@ -1126,6 +1201,46 @@ button:focus-visible {
 .status {
   font-size: 12px;
   color: var(--ink-soft);
+}
+
+.email-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--stroke);
+}
+
+.email-status-text {
+  font-size: 12px;
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+
+.calendar-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid var(--stroke);
+}
+
+.calendar-status-text {
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.app-shell[data-theme="dark"] .calendar-status-row {
+  background: rgba(17, 22, 30, 0.35);
 }
 
 

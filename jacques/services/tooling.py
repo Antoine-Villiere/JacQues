@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta, date
 from urllib.parse import urlencode, quote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+from zoneinfo import ZoneInfo
+from uuid import uuid4
+import subprocess
+import sys
 
 from ..config import GENERATED_DIR, Settings, UPLOADS_DIR
 from ..utils import safe_filename
@@ -94,6 +98,25 @@ def build_tools(
                     },
                 },
                 handler=_tool_email_draft,
+            ),
+            ToolSpec(
+                name="calendar_event",
+                description="Create a calendar event (.ics) that opens in the user's calendar app.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string"},
+                        "start": {"type": "string"},
+                        "end": {"type": "string"},
+                        "duration_minutes": {"type": "integer"},
+                        "all_day": {"type": "boolean"},
+                        "timezone": {"type": "string"},
+                        "location": {"type": "string"},
+                        "description": {"type": "string"},
+                    },
+                    "required": ["title", "start"],
+                },
+                handler=_tool_calendar_event,
             ),
             ToolSpec(
                 name="task_schedule",
@@ -485,12 +508,285 @@ def _tool_email_draft(args: dict[str, Any], settings: Settings, conversation_id:
     if params:
         mailto = f"{mailto}?{urlencode(params, quote_via=quote)}"
 
+    status_line = "Email draft ready."
+    apple_result = _create_mail_draft_apple_mail(
+        to_list, cc_list, bcc_list, subject, body
+    )
+    if apple_result is not None:
+        ok, message = apple_result
+        if ok:
+            status_line = "Apple Mail draft created."
+        else:
+            status_line = f"Apple Mail automation failed: {message}"
+
     return (
-        "Email draft ready.\n"
+        f"{status_line}\n"
         f"Mailto: {mailto}\n"
         f"To: {', '.join(to_list) if to_list else '-'}\n"
         f"Subject: {subject or '-'}"
     )
+
+
+def _osascript_literal(value: str) -> str:
+    text = str(value).replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{text}"'
+
+
+def _osascript_text_block(value: str) -> str:
+    if not value:
+        return '""'
+    parts = []
+    for line in str(value).splitlines():
+        parts.append(_osascript_literal(line))
+    return " & return & ".join(parts)
+
+
+def _run_osascript(lines: list[str]) -> tuple[bool, str]:
+    if sys.platform != "darwin":
+        return False, "macOS required"
+    args = ["osascript"]
+    for line in lines:
+        args.extend(["-e", line])
+    result = subprocess.run(args, capture_output=True, text=True)
+    if result.returncode != 0:
+        return False, (result.stderr or result.stdout).strip()
+    return True, (result.stdout or "").strip()
+
+
+def _create_mail_draft_apple_mail(
+    to_list: list[str],
+    cc_list: list[str],
+    bcc_list: list[str],
+    subject: str,
+    body: str,
+) -> tuple[bool, str] | None:
+    if sys.platform != "darwin":
+        return None
+    subject_text = _osascript_literal(subject or "")
+    body_text = _osascript_text_block(body or "")
+    lines = [
+        'tell application "Mail"',
+        f"set messageContent to {body_text}",
+        (
+            "set newMessage to make new outgoing message "
+            f'with properties {{subject:{subject_text}, content:messageContent, visible:true}}'
+        ),
+        "tell newMessage",
+    ]
+    for addr in to_list:
+        lines.append(
+            f"make new to recipient at end of to recipients "
+            f"with properties {{address:{_osascript_literal(addr)}}}"
+        )
+    for addr in cc_list:
+        lines.append(
+            f"make new cc recipient at end of cc recipients "
+            f"with properties {{address:{_osascript_literal(addr)}}}"
+        )
+    for addr in bcc_list:
+        lines.append(
+            f"make new bcc recipient at end of bcc recipients "
+            f"with properties {{address:{_osascript_literal(addr)}}}"
+        )
+    lines.extend(
+        [
+            "end tell",
+            "activate",
+            "end tell",
+        ]
+    )
+    return _run_osascript(lines)
+
+
+def _parse_datetime(value: str, tz: ZoneInfo) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    if "T" not in text and " " in text:
+        text = text.replace(" ", "T", 1)
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=tz)
+    return parsed.astimezone(tz)
+
+
+def _parse_date(value: str) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _ical_escape(value: str) -> str:
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace("\\", "\\\\")
+    text = text.replace("\n", "\\n")
+    text = text.replace(",", "\\,").replace(";", "\\;")
+    return text
+
+
+def _tool_calendar_event(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    title = str(args.get("title") or "").strip()
+    if not title:
+        return "Provide a title for the event."
+    tz_name = str(args.get("timezone") or settings.app_timezone or "UTC").strip()
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+        tz_name = "UTC"
+
+    all_day = bool(args.get("all_day"))
+    start_raw = args.get("start")
+    end_raw = args.get("end")
+    duration = args.get("duration_minutes")
+    location = str(args.get("location") or "").strip()
+    description = str(args.get("description") or "").strip()
+
+    ics_lines: list[str] = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//Jacques//Calendar//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:PUBLISH",
+        "BEGIN:VEVENT",
+        f"UID:{uuid4()}",
+        f"DTSTAMP:{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}",
+        f"SUMMARY:{_ical_escape(title)}",
+    ]
+
+    if all_day:
+        start_date = _parse_date(str(start_raw)) or _parse_date(str(title))
+        if not start_date:
+            return "Provide a start date for the all-day event (YYYY-MM-DD)."
+        end_date = _parse_date(str(end_raw)) if end_raw else start_date + timedelta(days=1)
+        if end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+        ics_lines.append(f"DTSTART;VALUE=DATE:{start_date.strftime('%Y%m%d')}")
+        ics_lines.append(f"DTEND;VALUE=DATE:{end_date.strftime('%Y%m%d')}")
+    else:
+        start_dt = _parse_datetime(str(start_raw), tz)
+        if not start_dt:
+            return "Provide a valid start datetime (ISO 8601)."
+        if end_raw:
+            end_dt = _parse_datetime(str(end_raw), tz)
+        else:
+            minutes = int(duration) if isinstance(duration, int) and duration > 0 else 60
+            end_dt = start_dt + timedelta(minutes=minutes)
+        if not end_dt:
+            return "Provide a valid end datetime (ISO 8601)."
+        if end_dt <= start_dt:
+            end_dt = start_dt + timedelta(minutes=30)
+        ics_lines.append(
+            f"DTSTART;TZID={tz_name}:{start_dt.astimezone(tz).strftime('%Y%m%dT%H%M%S')}"
+        )
+        ics_lines.append(
+            f"DTEND;TZID={tz_name}:{end_dt.astimezone(tz).strftime('%Y%m%dT%H%M%S')}"
+        )
+
+    if location:
+        ics_lines.append(f"LOCATION:{_ical_escape(location)}")
+    if description:
+        ics_lines.append(f"DESCRIPTION:{_ical_escape(description)}")
+    ics_lines.append("END:VEVENT")
+    ics_lines.append("END:VCALENDAR")
+
+    stem = safe_filename(title.lower().replace(" ", "_")) or "event"
+    filename = f"{stem}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.ics"
+    path = GENERATED_DIR / filename
+    path.write_text("\n".join(ics_lines), encoding="utf-8")
+
+    url = f"/files/generated/{filename}"
+    status_line = "Calendar event ready."
+    apple_result = _create_calendar_event_apple_calendar(
+        title=title,
+        start_raw=str(start_raw),
+        end_raw=str(end_raw) if end_raw else "",
+        all_day=all_day,
+        tz=tz,
+        location=location,
+        description=description,
+    )
+    if apple_result is not None:
+        ok, message = apple_result
+        if ok:
+            status_line = "Apple Calendar event created."
+        else:
+            status_line = f"Apple Calendar automation failed: {message}"
+
+    return (
+        f"{status_line}\n"
+        f"Title: {title}\n"
+        f"Start: {start_raw}\n"
+        f"End: {end_raw or ''}\n"
+        f"ICS: {url}"
+    )
+
+
+def _create_calendar_event_apple_calendar(
+    title: str,
+    start_raw: str,
+    end_raw: str,
+    all_day: bool,
+    tz: ZoneInfo,
+    location: str,
+    description: str,
+) -> tuple[bool, str] | None:
+    if sys.platform != "darwin":
+        return None
+    start_dt = _parse_datetime(start_raw, tz) if start_raw else None
+    end_dt = _parse_datetime(end_raw, tz) if end_raw else None
+    if all_day:
+        start_date = _parse_date(start_raw)
+        if not start_date:
+            return False, "Invalid start date"
+        if not end_dt:
+            end_date = _parse_date(end_raw) if end_raw else start_date + timedelta(days=1)
+        else:
+            end_date = end_dt.date()
+        if end_date <= start_date:
+            end_date = start_date + timedelta(days=1)
+        start_dt = datetime.combine(start_date, datetime.min.time(), tz)
+        end_dt = datetime.combine(end_date, datetime.min.time(), tz)
+    else:
+        if not start_dt:
+            return False, "Invalid start datetime"
+        if not end_dt:
+            end_dt = start_dt + timedelta(minutes=60)
+    start_str = start_dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+    end_str = end_dt.astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+    lines = [
+        'tell application "Calendar"',
+        "activate",
+        "if (count of calendars) is 0 then error \"No calendars available\"",
+        "set targetCal to first calendar",
+        (
+            "set newEvent to make new event at end of events of targetCal "
+            f"with properties {{summary:{_osascript_literal(title)}, "
+            f"start date:date {_osascript_literal(start_str)}, "
+            f"end date:date {_osascript_literal(end_str)}, "
+            f"location:{_osascript_literal(location)}, "
+            f"description:{_osascript_literal(description)}, "
+            f"allday event:{'true' if all_day else 'false'}}}"
+        ),
+        "end tell",
+    ]
+    return _run_osascript(lines)
 
 
 def _tool_task_schedule(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
@@ -714,7 +1010,7 @@ def _tool_plot_generate(args: dict[str, Any], settings: Settings, conversation_i
     path = GENERATED_DIR / filename
     if path.exists():
         stem = path.stem
-        filename = f"{stem}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}{path.suffix}"
+        filename = f"{stem}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}{path.suffix}"
         path = GENERATED_DIR / filename
 
     plotting.generate_plot(plot_spec, path)

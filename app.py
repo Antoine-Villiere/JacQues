@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import List
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import re
 import time
@@ -52,6 +52,9 @@ TOOL_LOCK = threading.Lock()
 MAILTO_SEEN: dict[int, int] = {}
 MAILTO_LOCK = threading.Lock()
 MAILTO_RECENT_SECONDS = 300
+CALENDAR_SEEN: dict[int, int] = {}
+CALENDAR_LOCK = threading.Lock()
+CALENDAR_RECENT_SECONDS = 300
 SCHEDULER_STARTED = False
 SCHEDULER_LOCK = threading.Lock()
 INITIAL_SYSTEM_PROMPT = db.get_setting("system_prompt") or assistant.SYSTEM_PROMPT
@@ -151,15 +154,35 @@ def _should_open_mailto(conversation_id: int, message_id: int) -> bool:
         return True
 
 
-def _is_recent_message(created_at: str | None) -> bool:
+def _should_open_calendar(conversation_id: int, message_id: int) -> bool:
+    with CALENDAR_LOCK:
+        last_seen = CALENDAR_SEEN.get(conversation_id)
+        if last_seen == message_id:
+            return False
+        CALENDAR_SEEN[conversation_id] = message_id
+        return True
+
+
+def _is_recent_message(created_at: str | None, max_age_seconds: int) -> bool:
     if not created_at:
         return False
     try:
         created = datetime.fromisoformat(created_at)
     except ValueError:
         return False
-    delta = datetime.utcnow() - created
-    return delta.total_seconds() <= MAILTO_RECENT_SECONDS
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - created.astimezone(timezone.utc)
+    return delta.total_seconds() <= max_age_seconds
+
+
+def _extract_ics_link(content: str) -> str | None:
+    if not content:
+        return None
+    match = re.search(r"(\/files\/generated\/[\\w\\-\\.]+\\.ics)", content)
+    if not match:
+        return None
+    return match.group(1)
 
 
 def _ensure_scheduler_started() -> None:
@@ -280,6 +303,32 @@ def _task_payload_summary(task: sqlite3.Row) -> str:
     if task["task_type"] == "web_digest":
         return str(payload.get("query") or "").strip()
     return ""
+
+
+def _get_docs_for_conversation(convo_id: str | None) -> list[dict[str, str | int]]:
+    if not convo_id:
+        return []
+    try:
+        conversation_id = int(convo_id)
+    except ValueError:
+        return []
+    docs = db.list_documents(conversation_id)
+    return [
+        {"id": int(doc["id"]), "name": doc["name"], "doc_type": doc["doc_type"]}
+        for doc in docs
+    ]
+
+
+def _apply_doc_mention(text: str, doc_name: str) -> str:
+    mention = f'@"{doc_name}" '
+    if not text:
+        return mention
+    trimmed = text.rstrip()
+    match = re.search(r"@[^\\s@]*$", trimmed)
+    if match:
+        return f"{trimmed[: match.start()]}{mention}"
+    spacer = "" if trimmed.endswith(" ") or not trimmed else " "
+    return f"{trimmed}{spacer}{mention}"
 
 
 def _file_item(label: str, name: str, detail: str, item_id: dict) -> html.Button:
@@ -812,7 +861,10 @@ app.layout = html.Div(
         dcc.Store(id="scroll-trigger", data=0),
         dcc.Store(id="mailto-data", data={}),
         dcc.Store(id="mailto-state", data={}),
+        dcc.Store(id="calendar-data", data={}),
+        dcc.Store(id="calendar-state", data={}),
         dcc.Store(id="tasks-refresh", data=0),
+        dcc.Store(id="docs-list", data=[]),
         dcc.Interval(id="stream-interval", interval=120, n_intervals=0),
         html.Div(
             className="sidebar",
@@ -941,9 +993,18 @@ app.layout = html.Div(
                                             children=html.Div(
                                                 className="chat-input upload-zone",
                                                 children=[
-                                                    dcc.Textarea(
-                                                        id="user-input",
-                                                        placeholder="Ask Jacques or drop files here",
+                                                    html.Div(
+                                                        className="chat-textarea-wrap",
+                                                        children=[
+                                                            dcc.Textarea(
+                                                                id="user-input",
+                                                                placeholder="Ask Jacques or drop files here",
+                                                            ),
+                                                            html.Div(
+                                                                id="mention-suggestions",
+                                                                className="mention-suggestions",
+                                                            ),
+                                                        ],
                                                     ),
                                                     html.Button(
                                                         "Send",
@@ -960,6 +1021,8 @@ app.layout = html.Div(
                                         html.Div(id="upload-status", className="status"),
                                         html.Div(id="stream-status", className="status"),
                                         html.Div(id="action-status", className="status"),
+                                        html.Div(id="email-status", className="status"),
+                                        html.Div(id="calendar-status", className="status"),
                                     ],
                                 ),
                             ],
@@ -1418,6 +1481,15 @@ def refresh_files(docs_refresh: int, images_refresh: int, convo_id: str | None):
         ],
         className="files-block",
     )
+
+
+@app.callback(
+    Output("docs-list", "data"),
+    Input("docs-refresh", "data"),
+    Input("convo-dropdown", "value"),
+)
+def refresh_docs_list(docs_refresh: int, convo_id: str | None):
+    return _get_docs_for_conversation(convo_id)
 
 
 @app.callback(
@@ -2292,6 +2364,74 @@ def refresh_tool_status(refresh_value: int, n_intervals: int, convo_id: str | No
 
 
 @app.callback(
+    Output("mention-suggestions", "children"),
+    Output("mention-suggestions", "className"),
+    Input("user-input", "value"),
+    State("docs-list", "data"),
+)
+def update_mention_suggestions(user_text: str | None, docs_list: list[dict] | None):
+    text = user_text or ""
+    docs = docs_list or []
+    match_text = text.rstrip()
+    if not match_text:
+        return "", "mention-suggestions"
+    match = re.search(r"@([^\\s@]*)$", match_text)
+    if not match or not docs:
+        return "", "mention-suggestions"
+    query = match.group(1).lower()
+    candidates = []
+    for doc in docs:
+        name = str(doc.get("name") or "")
+        if not query or query in name.lower():
+            candidates.append(doc)
+    if not candidates:
+        return "", "mention-suggestions"
+    buttons = []
+    for doc in candidates[:8]:
+        name = str(doc.get("name") or "")
+        doc_type = str(doc.get("doc_type") or "").lstrip(".").upper()
+        buttons.append(
+            html.Button(
+                [
+                    html.Span(name, className="mention-name"),
+                    html.Span(doc_type or "DOC", className="mention-tag"),
+                ],
+                id={"type": "doc-suggestion", "index": doc.get("id")},
+                className="mention-item",
+                n_clicks=0,
+            )
+        )
+    return buttons, "mention-suggestions mention-suggestions--open"
+
+
+@app.callback(
+    Output("user-input", "value", allow_duplicate=True),
+    Input({"type": "doc-suggestion", "index": ALL}, "n_clicks"),
+    State("user-input", "value"),
+    State("docs-list", "data"),
+    prevent_initial_call=True,
+)
+def apply_doc_suggestion(
+    clicks: list[int] | None,
+    current_text: str | None,
+    docs_list: list[dict] | None,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger or not isinstance(trigger, dict):
+        return no_update
+    doc_id = trigger.get("index")
+    docs = docs_list or []
+    doc_name = ""
+    for doc in docs:
+        if doc.get("id") == doc_id:
+            doc_name = str(doc.get("name") or "")
+            break
+    if not doc_name:
+        return no_update
+    return _apply_doc_mention(current_text or "", doc_name)
+
+
+@app.callback(
     Output("mailto-data", "data"),
     Input("chat-refresh", "data"),
     Input("stream-interval", "n_intervals"),
@@ -2306,7 +2446,7 @@ def refresh_mailto_data(
     row = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
     if not row:
         return {}
-    if not _is_recent_message(row["created_at"]):
+    if not _is_recent_message(row["created_at"], MAILTO_RECENT_SECONDS):
         _should_open_mailto(conversation_id, int(row["id"]))
         return {}
     args = _extract_tool_call_args(row["content"] or "")
@@ -2320,6 +2460,102 @@ def refresh_mailto_data(
         "message_id": int(row["id"]),
         "mailto": mailto,
     }
+
+
+@app.callback(
+    Output("email-status", "children"),
+    Input("chat-refresh", "data"),
+    Input("convo-dropdown", "value"),
+)
+def render_email_status(refresh_value: int, convo_id: str | None):
+    if not convo_id:
+        return ""
+    conversation_id = int(convo_id)
+    row = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
+    if not row:
+        return ""
+    args = _extract_tool_call_args(row["content"] or "")
+    mailto = _build_mailto(args)
+    if not mailto:
+        return ""
+    to_list = _normalize_list(args.get("to") if isinstance(args, dict) else None)
+    subject = ""
+    if isinstance(args, dict):
+        subject = str(args.get("subject") or "").strip()
+    summary = "Email draft ready"
+    if to_list:
+        summary += f" · To: {', '.join(to_list)}"
+    if subject:
+        summary += f" · Subject: {subject}"
+    return html.Div(
+        [
+            html.Span(summary, className="email-status-text"),
+            html.A(
+                "Open in Mail",
+                href=mailto,
+                className="icon-btn",
+            ),
+        ],
+        className="email-status-row",
+    )
+
+
+@app.callback(
+    Output("calendar-data", "data"),
+    Input("chat-refresh", "data"),
+    Input("stream-interval", "n_intervals"),
+    Input("convo-dropdown", "value"),
+)
+def refresh_calendar_data(
+    refresh_value: int, n_intervals: int, convo_id: str | None
+):
+    if not convo_id:
+        return {}
+    conversation_id = int(convo_id)
+    row = db.get_latest_tool_message_by_name(conversation_id, "calendar_event")
+    if not row:
+        return {}
+    if not _is_recent_message(row["created_at"], CALENDAR_RECENT_SECONDS):
+        _should_open_calendar(conversation_id, int(row["id"]))
+        return {}
+    ics_link = _extract_ics_link(row["content"] or "")
+    if not ics_link:
+        return {}
+    if not _should_open_calendar(conversation_id, int(row["id"])):
+        return {}
+    return {
+        "convo_id": conversation_id,
+        "message_id": int(row["id"]),
+        "ics": ics_link,
+    }
+
+
+@app.callback(
+    Output("calendar-status", "children"),
+    Input("chat-refresh", "data"),
+    Input("convo-dropdown", "value"),
+)
+def render_calendar_status(refresh_value: int, convo_id: str | None):
+    if not convo_id:
+        return ""
+    conversation_id = int(convo_id)
+    row = db.get_latest_tool_message_by_name(conversation_id, "calendar_event")
+    if not row:
+        return ""
+    ics_link = _extract_ics_link(row["content"] or "")
+    if not ics_link:
+        return ""
+    return html.Div(
+        [
+            html.Span("Calendar event ready.", className="calendar-status-text"),
+            html.A(
+                "Open in Calendar",
+                href=ics_link,
+                className="icon-btn",
+            ),
+        ],
+        className="calendar-status-row",
+    )
 
 
 @app.callback(
@@ -2377,6 +2613,31 @@ app.clientside_callback(
     Output("mailto-state", "data"),
     Input("mailto-data", "data"),
     State("mailto-state", "data"),
+)
+
+
+app.clientside_callback(
+    """
+    function(calendarData, calendarState) {
+        if (!calendarData || !calendarData.ics) {
+            return calendarState || {};
+        }
+        const convoId = String(calendarData.convo_id || "");
+        if (!convoId) {
+            return calendarState || {};
+        }
+        const nextState = Object.assign({}, calendarState || {});
+        if (String(nextState[convoId]) === String(calendarData.message_id)) {
+            return nextState;
+        }
+        window.location.href = calendarData.ics;
+        nextState[convoId] = calendarData.message_id;
+        return nextState;
+    }
+    """,
+    Output("calendar-state", "data"),
+    Input("calendar-data", "data"),
+    State("calendar-state", "data"),
 )
 
 

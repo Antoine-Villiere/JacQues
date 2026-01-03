@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Iterable
+import re
 
 
 def highlight_text(path: Path, text: str, page_number: int | None = None) -> int:
@@ -33,6 +34,11 @@ def _find_text_rects(
                 continue
             page = pdf.pages[page_index]
             matches = page.search(text, regex=False)
+            if not matches:
+                normalized = " ".join(text.split())
+                if normalized:
+                    pattern = re.escape(normalized).replace(r"\ ", r"\\s+")
+                    matches = page.search(pattern, regex=True)
             if not matches:
                 continue
             for match in matches:

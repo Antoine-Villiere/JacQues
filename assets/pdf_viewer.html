@@ -103,6 +103,7 @@
       let linkService = null;
       let pagesReady = false;
       let loadTimeout = null;
+      let lastSelection = null;
 
       if (!window.pdfjsLib || !window.pdfjsViewer) {
         showFallback(fileUrl, "PDF.js indisponible, fallback navigateur.");
@@ -180,15 +181,19 @@
         }, 4500);
       }
 
-      function getSelectionInfo() {
-        const selection = window.getSelection();
+      function isInViewer(node) {
+        return node && viewerContainer && viewerContainer.contains(node);
+      }
+
+      function getSelectionInfo(selection) {
         const text = selection ? selection.toString().trim() : "";
         if (!text) return null;
         let node = selection.anchorNode;
+        if (!isInViewer(node)) return null;
         while (node && !(node.classList && node.classList.contains("page"))) {
           node = node.parentNode;
         }
-        let page = pdfViewer.currentPageNumber || 1;
+        let page = pdfViewer && pdfViewer.currentPageNumber ? pdfViewer.currentPageNumber : 1;
         if (node && node.dataset && node.dataset.pageNumber) {
           const parsed = parseInt(node.dataset.pageNumber, 10);
           if (!Number.isNaN(parsed)) {
@@ -198,8 +203,17 @@
         return { text, page };
       }
 
+      function captureSelection() {
+        const selection = window.getSelection();
+        const info = getSelectionInfo(selection);
+        if (info) {
+          lastSelection = info;
+        }
+      }
+
       async function highlightSelection() {
-        const info = getSelectionInfo();
+        const selection = window.getSelection();
+        const info = getSelectionInfo(selection) || lastSelection;
         if (!info) {
           statusEl.textContent = "Select text first.";
           return;
@@ -236,6 +250,8 @@
       document
         .getElementById("highlight-btn")
         .addEventListener("click", highlightSelection);
+      document.addEventListener("selectionchange", captureSelection);
+      viewerContainer.addEventListener("mouseup", captureSelection);
 
       loadPdf(fileUrl);
     </script>
