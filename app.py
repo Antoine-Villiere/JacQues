@@ -108,6 +108,18 @@ def _extract_tool_call_args(content: str) -> dict | None:
         return None
 
 
+def _extract_tool_result_text(content: str) -> str:
+    if not content:
+        return ""
+    if "```text" in content:
+        try:
+            return content.split("```text", 1)[1].split("```", 1)[0].strip()
+        except Exception:
+            return ""
+    parts = content.split("\n", 1)
+    return parts[1].strip() if len(parts) > 1 else content.strip()
+
+
 def _normalize_list(value):
     if value is None:
         return []
@@ -2471,18 +2483,24 @@ def render_email_status(refresh_value: int, convo_id: str | None):
     if not convo_id:
         return ""
     conversation_id = int(convo_id)
-    row = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
-    if not row:
+    row_call = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
+    if not row_call:
         return ""
-    args = _extract_tool_call_args(row["content"] or "")
+    args = _extract_tool_call_args(row_call["content"] or "")
     mailto = _build_mailto(args)
     if not mailto:
         return ""
+    status_line = "Email draft ready."
+    row_result = db.get_latest_tool_message_by_name(conversation_id, "email_draft")
+    if row_result:
+        payload = _extract_tool_result_text(row_result["content"] or "")
+        if payload:
+            status_line = payload.splitlines()[0]
     to_list = _normalize_list(args.get("to") if isinstance(args, dict) else None)
     subject = ""
     if isinstance(args, dict):
         subject = str(args.get("subject") or "").strip()
-    summary = "Email draft ready"
+    summary = status_line
     if to_list:
         summary += f" · To: {', '.join(to_list)}"
     if subject:
@@ -2542,12 +2560,14 @@ def render_calendar_status(refresh_value: int, convo_id: str | None):
     row = db.get_latest_tool_message_by_name(conversation_id, "calendar_event")
     if not row:
         return ""
+    payload = _extract_tool_result_text(row["content"] or "")
+    status_line = payload.splitlines()[0] if payload else "Calendar event ready."
     ics_link = _extract_ics_link(row["content"] or "")
     if not ics_link:
         return ""
     return html.Div(
         [
-            html.Span("Calendar event ready.", className="calendar-status-text"),
+            html.Span(status_line, className="calendar-status-text"),
             html.A(
                 "Open in Calendar",
                 href=ics_link,

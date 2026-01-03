@@ -1,8 +1,12 @@
 # Jacques Assistant (Dash)
 
-Jacques est un assistant complet en Python + Dash. Il gere plusieurs conversations, conserve la memoire du contexte, ingere des documents (PDF, Word, Excel, CSV), modifie ou cree des fichiers Word/Excel, analyse des images, utilise un systeme de RAG, peut faire du web browsing, et peut generer des images. Le LLM passe par LiteLLM (Groq) et peut piloter les outils automatiquement.
+Jacques is a full-featured local assistant built with Python + Dash. It supports
+multi-conversation chat, per-conversation RAG, document ingestion (PDF/Word/Excel/CSV),
+image analysis, web and news search, plotting, and real tool calling via LiteLLM
+with Groq models. It can also create real Apple Mail drafts and Apple Calendar
+events on macOS (no sending, no deleting).
 
-## Demarrage rapide
+## Quickstart
 
 ```bash
 python -m venv .venv
@@ -12,15 +16,12 @@ cp .env.example .env
 python app.py
 ```
 
-Ouvrir `http://127.0.0.1:8050`.
+Open `http://127.0.0.1:8050`.
 
 ## Configuration (.env)
 
-```
+```bash
 GROQ_API_KEY=your_key
-LITELLM_PROVIDER=
-LITELLM_API_KEY=
-LITELLM_API_BASE=
 TEXT_MODEL=groq/openai/gpt-oss-120b
 REASONING_MODEL=groq/openai/gpt-oss-120b
 VISION_MODEL=groq/meta-llama/llama-4-maverick-17b-128e-instruct
@@ -28,10 +29,10 @@ VISION_ENABLED=true
 IMAGE_PROVIDER=openai
 IMAGE_API_KEY=your_key
 IMAGE_MODEL=gpt-image-1
-WEB_TIMEOUT=10
 BRAVE_API_KEY=your_key
 BRAVE_COUNTRY=FR
 BRAVE_SEARCH_LANG=fr
+WEB_TIMEOUT=10
 RAG_TOP_K=4
 MAX_HISTORY_MESSAGES=40
 MAX_TOOL_CALLS=4
@@ -39,79 +40,92 @@ LLM_STREAMING=true
 APP_BASE_URL=http://127.0.0.1:8050
 ONLYOFFICE_URL=http://127.0.0.1:8080
 ONLYOFFICE_JWT=
+APP_TIMEZONE=Europe/Zurich
+JACQUES_DATA_DIR=~/.jacques
 ```
 
-Si aucune cle API n'est fournie, Jacques reste utilisable mais repond avec un mode degrade (RAG + contexte).
-`GROQ_API_KEY` suffit pour Groq; `LITELLM_PROVIDER` et `LITELLM_API_KEY` sont optionnels.
-`IMAGE_API_KEY` sert a la generation d'images (OpenAI par defaut).
-`BRAVE_API_KEY` active Brave Web Search (remplace DuckDuckGo).
-`LLM_STREAMING=true` active le mode streaming LiteLLM (affichage token par token).
-`APP_BASE_URL` doit etre accessible par OnlyOffice (pour recuperer les fichiers).
-`ONLYOFFICE_URL` pointe vers le Document Server OnlyOffice.
-`ONLYOFFICE_JWT` (optionnel) si votre Document Server utilise JWT.
+Notes:
+- `GROQ_API_KEY` is enough for Groq through LiteLLM.
+- `BRAVE_API_KEY` enables web + news search (Brave Search API).
+- `LLM_STREAMING=true` streams tokens in the UI.
+- `APP_BASE_URL` must be reachable by OnlyOffice for callbacks.
+- `ONLYOFFICE_URL` points to the Document Server (optional).
+- `JACQUES_DATA_DIR` controls where local data is stored (default `~/.jacques`).
 
-## Fonctionnalites
+## Core features
 
-- Multi-conversations avec persistance SQLite.
-- RAG local avec TF-IDF.
-- Ingestion PDF, Word, Excel, CSV.
-- Modifications Word/Excel via commandes (tools).
-- Edition Word/Excel depuis l'interface (offcanvas fichiers) avec preservation du formatage.
-- Option: viewer/editeur OnlyOffice integre dans l'offcanvas (docx/xlsx/pdf).
-- Upload et analyse d'images (vision optionnelle).
-- Generation d'images (API ou fallback local).
-- Generation de plots via Python (plot_generate, plot_fred_series).
-- plot_fred_series utilise FRED (ex: NASDAQCOM) pour series temporelles sans rate-limit.
-- Web search via Brave Web Search API.
-- Tool calling (MCP style) via LiteLLM pour declencher automatiquement les outils.
-- Drag and drop de fichiers dans la zone de saisie.
-- Mode sombre et web tools auto (pas de switch manuel).
-- Les documents et images sont scopes par conversation (RAG isole par discussion).
-- Streaming token par token dans l'interface (LLM_STREAMING=true).
-- Prompt systeme editable et memoire globale partagee entre conversations.
-- Sources web cliquables avec preview dans un panneau a droite (onglets Sources/Fichiers).
-- PDF viewer avec surlignage (highlight) qui met a jour le fichier et le RAG.
-  - Word: append + find/replace pour eviter de casser le formatage.
-  - Excel: selection multi-cellules + bouton "Envoyer la selection au chat".
+- Multi-conversation chat with SQLite persistence.
+- Automatic RAG when documents exist (TF-IDF index per conversation).
+- Ingestion: PDF, Word, Excel, CSV.
+- Word/Excel edits with formatting preservation.
+- Image analysis (vision) and image generation.
+- Plotting (`plot_generate`, `plot_fred_series`).
+- Web search + news search (Brave API).
+- Web scraping for specific sites via CSS selector.
+- Task scheduler with cron (APScheduler).
+- Apple Mail draft creation and Apple Calendar event creation (macOS only).
+- Per-conversation files and images are isolated.
+- Streaming responses and tool status indicator.
+- System prompt + global memory editor in Settings.
+- Type `@` in the input to mention documents from the current conversation.
 
-## Reglages assistant (UI)
+## UI notes
 
-Via l'icone `SYS` a droite de Conversations:
-- Modifier le prompt systeme (sauvegarde immediate).
-- Voir/editer la memoire globale appliquee aux futures conversations.
-- Supprimer une conversation.
+- Files are listed on the right and open in an off-canvas editor/viewer.
+- PDF highlight mode opens a dedicated viewer and writes highlights into the file.
+- OnlyOffice editor can be launched from Settings (optional, best formatting fidelity).
+- Tool calls are hidden in chat unless a tool error occurs.
 
-## Commandes (chat)
+## Tools (automatic)
 
-Utiliser des commandes slash dans la zone de chat:
+Documents and RAG:
+- `list_documents`, `rag_search`, `rag_rebuild`
 
+Images:
+- `list_images`, `image_describe`, `image_generate`
+
+Email (Apple Mail, macOS):
+- `email_draft` creates a real draft (no sending, no deletion)
+- `mail_search` and `mail_read` allow reading messages on request
+
+Calendar (Apple Calendar, macOS):
+- `calendar_event` creates a real calendar event
+
+Tasks:
+- `task_schedule`, `task_list`, `task_delete`, `task_enable`
+
+Web:
+- `web_search`, `news_search`, `web_fetch` (supports CSS selector)
+
+Project access:
+- `project_list_files`, `project_search`, `project_read_file`, `project_replace`
+
+## Apple Mail / Calendar automation (macOS)
+
+This uses AppleScript under the hood.
+You must allow automation in:
+System Settings -> Privacy & Security -> Automation
+Enable Calendar/Mail for the terminal/python process.
+
+Jacques will never delete or send emails. Drafts only.
+
+## Storage
+
+Default location:
+- `~/.jacques/jacques.db`
+- `~/.jacques/uploads` (documents)
+- `~/.jacques/images` (imported images)
+- `~/.jacques/generated` (generated images, plots, ics)
+
+To store data inside the repo, set:
 ```
-/help
-/excel create report.xlsx Sheet1
-/excel add-sheet report.xlsx Data
-/excel set report.xlsx Sheet1 A1 "Bonjour"
-/word create notes.docx
-/word append notes.docx "Une nouvelle ligne"
-/word replace notes.docx old new
-/img create scene.png "A desert sunrise"
-/web latest AI news
-/doc list
-/rag rebuild
+JACQUES_DATA_DIR=./data
 ```
 
-## Dossiers importants
+## Troubleshooting
 
-- `${JACQUES_DATA_DIR:-~/.jacques}/jacques.db`: base SQLite
-- `${JACQUES_DATA_DIR:-~/.jacques}/uploads`: documents ingeres
-- `${JACQUES_DATA_DIR:-~/.jacques}/exports`: reserve (legacy)
-- `${JACQUES_DATA_DIR:-~/.jacques}/images`: images importees
-- `${JACQUES_DATA_DIR:-~/.jacques}/generated`: images generees
+- OnlyOffice black/blank frame: verify `ONLYOFFICE_URL`, `APP_BASE_URL`, and Docker.
+- Mail/Calendar not creating: check macOS Automation permissions.
+- Web search returns empty: check `BRAVE_API_KEY`.
+- PDF highlight not working: ensure the PDF is text-based (not scanned).
 
-Par defaut, les donnees (memoire, documents, images) sont stockees dans `~/.jacques`.
-Pour reutiliser un dossier local au repo, definir `JACQUES_DATA_DIR=./data` dans `.env`.
-
-## Notes
-
-- Le web search est volontairement simple. Pour un usage pro, brancher un moteur de recherche.
-- Le RAG est TF-IDF local. Remplacez par un vecteur store si besoin.
-- Les modeles par defaut sont parametres pour les IDs demandes. Ajuster les IDs si votre provider Groq n'expose pas ces noms.

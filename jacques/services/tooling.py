@@ -11,7 +11,7 @@ from uuid import uuid4
 import subprocess
 import sys
 
-from ..config import GENERATED_DIR, Settings, UPLOADS_DIR
+from ..config import BASE_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
 from ..utils import safe_filename
 from .. import db
 from . import (
@@ -100,6 +100,36 @@ def build_tools(
                 handler=_tool_email_draft,
             ),
             ToolSpec(
+                name="mail_search",
+                description="Search Apple Mail and return matching messages.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "account": {"type": "string"},
+                        "mailbox": {"type": "string"},
+                        "since_days": {"type": "integer"},
+                        "limit": {"type": "integer"},
+                    },
+                },
+                handler=_tool_mail_search,
+            ),
+            ToolSpec(
+                name="mail_read",
+                description="Read a specific Apple Mail message by id.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "mail_id": {"type": "integer"},
+                        "message_id": {"type": "string"},
+                        "account": {"type": "string"},
+                        "mailbox": {"type": "string"},
+                        "max_chars": {"type": "integer"},
+                    },
+                },
+                handler=_tool_mail_read,
+            ),
+            ToolSpec(
                 name="calendar_event",
                 description="Create a calendar event (.ics) that opens in the user's calendar app.",
                 parameters={
@@ -169,6 +199,66 @@ def build_tools(
                     "required": ["task_id", "enabled"],
                 },
                 handler=_tool_task_enable,
+            ),
+            ToolSpec(
+                name="project_list_files",
+                description="List files in the local project directory.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "pattern": {"type": "string"},
+                        "recursive": {"type": "boolean"},
+                        "include_hidden": {"type": "boolean"},
+                        "max": {"type": "integer"},
+                    },
+                },
+                handler=_tool_project_list_files,
+            ),
+            ToolSpec(
+                name="project_read_file",
+                description="Read a file from the local project directory.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "start_line": {"type": "integer"},
+                        "end_line": {"type": "integer"},
+                        "max_chars": {"type": "integer"},
+                    },
+                    "required": ["path"],
+                },
+                handler=_tool_project_read_file,
+            ),
+            ToolSpec(
+                name="project_search",
+                description="Search for text in project files.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "path": {"type": "string"},
+                        "max_results": {"type": "integer"},
+                        "include_hidden": {"type": "boolean"},
+                    },
+                    "required": ["query"],
+                },
+                handler=_tool_project_search,
+            ),
+            ToolSpec(
+                name="project_replace",
+                description="Replace text in a project file (targeted update).",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "old_text": {"type": "string"},
+                        "new_text": {"type": "string"},
+                        "count": {"type": "integer"},
+                    },
+                    "required": ["path", "old_text", "new_text"],
+                },
+                handler=_tool_project_replace,
             ),
         ]
     )
@@ -372,17 +462,44 @@ def build_tools(
                     description="Search the web for information.",
                     parameters={
                         "type": "object",
-                        "properties": {"query": {"type": "string"}},
+                        "properties": {
+                            "query": {"type": "string"},
+                            "limit": {"type": "integer"},
+                            "country": {"type": "string"},
+                            "search_lang": {"type": "string"},
+                            "freshness": {"type": "string"},
+                            "result_filter": {"type": "string"},
+                        },
                         "required": ["query"],
                     },
                     handler=_tool_web_search,
+                ),
+                ToolSpec(
+                    name="news_search",
+                    description="Search the news (Brave News API).",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "limit": {"type": "integer"},
+                            "country": {"type": "string"},
+                            "search_lang": {"type": "string"},
+                            "freshness": {"type": "string"},
+                        },
+                        "required": ["query"],
+                    },
+                    handler=_tool_news_search,
                 ),
                 ToolSpec(
                     name="web_fetch",
                     description="Fetch and extract text from a URL.",
                     parameters={
                         "type": "object",
-                        "properties": {"url": {"type": "string"}},
+                        "properties": {
+                            "url": {"type": "string"},
+                            "selector": {"type": "string"},
+                            "max_chars": {"type": "integer"},
+                        },
                         "required": ["url"],
                     },
                     handler=_tool_web_fetch,
@@ -724,7 +841,7 @@ def _tool_calendar_event(args: dict[str, Any], settings: Settings, conversation_
     if apple_result is not None:
         ok, message = apple_result
         if ok:
-            status_line = "Apple Calendar event created."
+            status_line = f"Apple Calendar event created (id {message or 'ok'})."
         else:
             status_line = f"Apple Calendar automation failed: {message}"
 
@@ -774,7 +891,7 @@ def _create_calendar_event_apple_calendar(
         'tell application "Calendar"',
         "activate",
         "if (count of calendars) is 0 then error \"No calendars available\"",
-        "set targetCal to first calendar",
+        "set targetCal to first calendar whose writable is true",
         (
             "set newEvent to make new event at end of events of targetCal "
             f"with properties {{summary:{_osascript_literal(title)}, "
@@ -784,6 +901,7 @@ def _create_calendar_event_apple_calendar(
             f"description:{_osascript_literal(description)}, "
             f"allday event:{'true' if all_day else 'false'}}}"
         ),
+        "return id of newEvent",
         "end tell",
     ]
     return _run_osascript(lines)
@@ -887,6 +1005,313 @@ def _tool_task_enable(args: dict[str, Any], settings: Settings, conversation_id:
     return f"Task {task_id} {state}."
 
 
+def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    if sys.platform != "darwin":
+        return "Apple Mail search requires macOS."
+    query = str(args.get("query") or "").strip()
+    account = str(args.get("account") or "").strip()
+    mailbox = str(args.get("mailbox") or "").strip()
+    limit = args.get("limit")
+    limit_value = int(limit) if isinstance(limit, int) and limit > 0 else 20
+    since_days = args.get("since_days")
+    use_cutoff = isinstance(since_days, int) and since_days > 0
+
+    script_lines = [
+        f"set maxResults to {limit_value}",
+        f"set searchQuery to {_osascript_literal(query)}",
+        f"set accountName to {_osascript_literal(account)}",
+        f"set mailboxName to {_osascript_literal(mailbox)}",
+        f"set useCutoff to {str(use_cutoff).lower()}",
+    ]
+    if use_cutoff:
+        script_lines.append(f"set cutoffDate to (current date) - ({since_days} * days)")
+    script_lines.extend(
+        [
+            "set outputLines to {}",
+            'tell application "Mail"',
+            "set targetAccounts to {}",
+            "if accountName is not \"\" then",
+            "set targetAccounts to {account accountName}",
+            "else",
+            "set targetAccounts to every account",
+            "end if",
+            "repeat with acc in targetAccounts",
+            "set targetMailboxes to {}",
+            "if mailboxName is not \"\" then",
+            "set targetMailboxes to {mailbox mailboxName of acc}",
+            "else",
+            "set targetMailboxes to mailboxes of acc",
+            "end if",
+            "repeat with mbox in targetMailboxes",
+            "if (count of outputLines) ≥ maxResults then exit repeat",
+            "set theMessages to {}",
+            "if useCutoff then",
+            "if searchQuery is not \"\" then",
+            "set theMessages to (every message of mbox whose date received is greater than cutoffDate and (subject contains searchQuery or sender contains searchQuery or content contains searchQuery))",
+            "else",
+            "set theMessages to (every message of mbox whose date received is greater than cutoffDate)",
+            "end if",
+            "else",
+            "if searchQuery is not \"\" then",
+            "set theMessages to (every message of mbox whose subject contains searchQuery or sender contains searchQuery or content contains searchQuery)",
+            "else",
+            "set theMessages to (messages of mbox)",
+            "end if",
+            "end if",
+            "repeat with msg in theMessages",
+            "set mailId to id of msg as string",
+            "set msgId to \"\"",
+            "try",
+            "set msgId to message id of msg as string",
+            "end try",
+            "set subjectText to subject of msg as string",
+            "set senderText to sender of msg as string",
+            "set dateText to date received of msg as string",
+            "set mailboxText to name of mbox as string",
+            "set accountText to name of acc as string",
+            "set lineText to mailId & \"||\" & msgId & \"||\" & subjectText & \"||\" & senderText & \"||\" & dateText & \"||\" & mailboxText & \"||\" & accountText",
+            "copy lineText to end of outputLines",
+            "if (count of outputLines) ≥ maxResults then exit repeat",
+            "end repeat",
+            "end repeat",
+            "end repeat",
+            "end tell",
+            "set text item delimiters to \"\\n\"",
+            "return outputLines as string",
+        ]
+    )
+    ok, output = _run_osascript(script_lines)
+    if not ok:
+        return f"Mail search failed: {output}"
+    output = output.strip()
+    if not output:
+        return "No matching emails."
+    lines = output.splitlines()
+    rendered = []
+    for line in lines:
+        parts = line.split("||")
+        if len(parts) < 7:
+            continue
+        mail_id, message_id, subject, sender, date_text, mailbox_name, account_name = parts[:7]
+        rendered.append(
+            f"- id {mail_id} | msgid {message_id or '-'} | {subject} "
+            f"| {sender} | {date_text} | {account_name}/{mailbox_name}"
+        )
+    return "Mail results:\n" + "\n".join(rendered) if rendered else "No matching emails."
+
+
+def _tool_mail_read(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    if sys.platform != "darwin":
+        return "Apple Mail read requires macOS."
+    mail_id = args.get("mail_id")
+    message_id = str(args.get("message_id") or "").strip()
+    account = str(args.get("account") or "").strip()
+    mailbox = str(args.get("mailbox") or "").strip()
+    max_chars = args.get("max_chars")
+    max_chars_value = int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else 4000
+    if not isinstance(mail_id, int) and not message_id:
+        return "Provide mail_id or message_id."
+
+    script_lines = [
+        f"set mailId to {_osascript_literal(str(mail_id) if isinstance(mail_id, int) else '')}",
+        f"set messageId to {_osascript_literal(message_id)}",
+        f"set accountName to {_osascript_literal(account)}",
+        f"set mailboxName to {_osascript_literal(mailbox)}",
+        "set foundMessage to missing value",
+        'tell application "Mail"',
+        "set targetAccounts to {}",
+        "if accountName is not \"\" then",
+        "set targetAccounts to {account accountName}",
+        "else",
+        "set targetAccounts to every account",
+        "end if",
+        "repeat with acc in targetAccounts",
+        "set targetMailboxes to {}",
+        "if mailboxName is not \"\" then",
+        "set targetMailboxes to {mailbox mailboxName of acc}",
+        "else",
+        "set targetMailboxes to mailboxes of acc",
+        "end if",
+        "repeat with mbox in targetMailboxes",
+        "if foundMessage is not missing value then exit repeat",
+        "try",
+        "if mailId is not \"\" then",
+        "set foundMessage to first message of mbox whose id is (mailId as number)",
+        "else if messageId is not \"\" then",
+        "set foundMessage to first message of mbox whose message id is messageId",
+        "end if",
+        "end try",
+        "end repeat",
+        "end repeat",
+        "if foundMessage is missing value then return \"\"",
+        "set subjectText to subject of foundMessage as string",
+        "set senderText to sender of foundMessage as string",
+        "set dateText to date received of foundMessage as string",
+        "set bodyText to content of foundMessage as string",
+        "return subjectText & \"||\" & senderText & \"||\" & dateText & \"||\" & bodyText",
+        "end tell",
+    ]
+    ok, output = _run_osascript(script_lines)
+    if not ok:
+        return f"Mail read failed: {output}"
+    if not output:
+        return "Email not found."
+    parts = output.split("||", 3)
+    if len(parts) < 4:
+        return "Email read failed: malformed response."
+    subject, sender, date_text, body = parts
+    body = body.strip()
+    if len(body) > max_chars_value:
+        body = body[:max_chars_value].rsplit(" ", 1)[0] + "..."
+    return (
+        "Email:\n"
+        f"Subject: {subject}\n"
+        f"From: {sender}\n"
+        f"Date: {date_text}\n\n"
+        f"{body}"
+    )
+
+
+def _resolve_project_path(path_value: str | None) -> Path:
+    root = BASE_DIR.resolve()
+    candidate = (root / (path_value or "")).resolve()
+    if candidate == root or root in candidate.parents:
+        return candidate
+    raise ValueError("Path is outside the project root.")
+
+
+def _tool_project_list_files(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    path_value = str(args.get("path") or ".")
+    pattern = str(args.get("pattern") or "").strip()
+    recursive = bool(args.get("recursive"))
+    include_hidden = bool(args.get("include_hidden"))
+    limit = args.get("max")
+    max_value = int(limit) if isinstance(limit, int) and limit > 0 else 200
+    try:
+        base = _resolve_project_path(path_value)
+    except ValueError as exc:
+        return str(exc)
+    if not base.exists():
+        return "Path not found."
+    entries = []
+    if pattern:
+        iterator = base.rglob(pattern) if recursive else base.glob(pattern)
+    else:
+        iterator = base.rglob("*") if recursive else base.iterdir()
+    for entry in iterator:
+        if not include_hidden:
+            if any(part.startswith(".") for part in entry.relative_to(base).parts):
+                continue
+        rel = entry.relative_to(BASE_DIR).as_posix()
+        entries.append(rel + ("/" if entry.is_dir() else ""))
+        if len(entries) >= max_value:
+            break
+    if not entries:
+        return "No files found."
+    return "Project files:\n" + "\n".join(f"- {item}" for item in entries)
+
+
+def _tool_project_read_file(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    path_value = str(args.get("path") or "").strip()
+    if not path_value:
+        return "Provide a file path."
+    try:
+        path = _resolve_project_path(path_value)
+    except ValueError as exc:
+        return str(exc)
+    if not path.exists() or not path.is_file():
+        return "File not found."
+    max_chars = args.get("max_chars")
+    max_value = int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else 4000
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"Read failed: {exc}"
+    start_line = args.get("start_line")
+    end_line = args.get("end_line")
+    if isinstance(start_line, int) or isinstance(end_line, int):
+        lines = content.splitlines()
+        start = max((start_line or 1) - 1, 0)
+        end = min(end_line or len(lines), len(lines))
+        content = "\n".join(lines[start:end])
+    if len(content) > max_value:
+        content = content[:max_value].rsplit(" ", 1)[0] + "..."
+    return f"File: {path_value}\n\n{content}"
+
+
+def _tool_project_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "Provide a search query."
+    path_value = str(args.get("path") or ".")
+    include_hidden = bool(args.get("include_hidden"))
+    max_results = args.get("max_results")
+    max_value = int(max_results) if isinstance(max_results, int) and max_results > 0 else 40
+    try:
+        base = _resolve_project_path(path_value)
+    except ValueError as exc:
+        return str(exc)
+    if not base.exists():
+        return "Path not found."
+    results = []
+    for entry in base.rglob("*"):
+        if entry.is_dir():
+            continue
+        if not include_hidden and any(part.startswith(".") for part in entry.relative_to(base).parts):
+            continue
+        try:
+            raw = entry.read_bytes()
+        except Exception:
+            continue
+        if b"\x00" in raw[:1024]:
+            continue
+        text = raw.decode("utf-8", errors="ignore")
+        if query not in text:
+            continue
+        for idx, line in enumerate(text.splitlines(), start=1):
+            if query in line:
+                rel = entry.relative_to(BASE_DIR).as_posix()
+                snippet = line.strip()
+                results.append(f"- {rel}:{idx} {snippet}")
+                if len(results) >= max_value:
+                    break
+        if len(results) >= max_value:
+            break
+    if not results:
+        return "No matches found."
+    return "Search results:\n" + "\n".join(results)
+
+
+def _tool_project_replace(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    path_value = str(args.get("path") or "").strip()
+    old_text = str(args.get("old_text") or "")
+    new_text = str(args.get("new_text") or "")
+    if not path_value or not old_text:
+        return "Provide path and old_text."
+    try:
+        path = _resolve_project_path(path_value)
+    except ValueError as exc:
+        return str(exc)
+    if not path.exists() or not path.is_file():
+        return "File not found."
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"Read failed: {exc}"
+    if old_text not in content:
+        return "Text not found."
+    count = args.get("count")
+    replace_count = int(count) if isinstance(count, int) and count > 0 else -1
+    updated = (
+        content.replace(old_text, new_text, replace_count)
+        if replace_count > 0
+        else content.replace(old_text, new_text)
+    )
+    path.write_text(updated, encoding="utf-8")
+    replaced = content.count(old_text) if replace_count < 0 else min(content.count(old_text), replace_count)
+    return f"Replaced {replaced} occurrence(s) in {path_value}."
+
+
 def _tool_rag_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
     query = str(args.get("query", "")).strip()
     if not query:
@@ -905,7 +1330,40 @@ def _tool_web_search(args: dict[str, Any], settings: Settings, conversation_id: 
     query = str(args.get("query", "")).strip()
     if not query:
         return "Provide a query for web search."
-    results = web_search.search(query, settings)
+    limit = args.get("limit")
+    country = str(args.get("country") or "").strip() or None
+    search_lang = str(args.get("search_lang") or "").strip() or None
+    freshness = str(args.get("freshness") or "").strip() or None
+    result_filter = str(args.get("result_filter") or "").strip() or None
+    results = web_search.search(
+        query,
+        settings,
+        limit=int(limit) if isinstance(limit, int) and limit > 0 else 5,
+        country=country,
+        search_lang=search_lang,
+        freshness=freshness,
+        result_filter=result_filter,
+    )
+    summary = web_search.summarize_results(results)
+    return summary or "No results."
+
+
+def _tool_news_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    query = str(args.get("query", "")).strip()
+    if not query:
+        return "Provide a query for news search."
+    limit = args.get("limit")
+    country = str(args.get("country") or "").strip() or None
+    search_lang = str(args.get("search_lang") or "").strip() or None
+    freshness = str(args.get("freshness") or "").strip() or None
+    results = web_search.news_search(
+        query,
+        settings,
+        limit=int(limit) if isinstance(limit, int) and limit > 0 else 5,
+        country=country,
+        search_lang=search_lang,
+        freshness=freshness,
+    )
     summary = web_search.summarize_results(results)
     return summary or "No results."
 
@@ -914,9 +1372,15 @@ def _tool_web_fetch(args: dict[str, Any], settings: Settings, conversation_id: i
     url = str(args.get("url", "")).strip()
     if not url:
         return "Provide a URL to fetch."
-    content = web_search.fetch_url(url, settings)
-    if len(content) > 1200:
-        content = content[:1200].rsplit(" ", 1)[0] + "..."
+    selector = str(args.get("selector") or "").strip() or None
+    max_chars = args.get("max_chars")
+    max_value = int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else 1200
+    content = web_search.fetch_url(
+        url,
+        settings,
+        selector=selector,
+        max_chars=max_value,
+    )
     return content
 
 
