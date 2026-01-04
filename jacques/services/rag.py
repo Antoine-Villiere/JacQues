@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import pickle
+import threading
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
@@ -25,6 +26,7 @@ def build_index(conversation_id: int) -> None:
     if not documents:
         if index_path.exists():
             index_path.unlink()
+        _drop_cache(conversation_id)
         return
 
     filtered = [
@@ -35,6 +37,7 @@ def build_index(conversation_id: int) -> None:
     if not filtered:
         if index_path.exists():
             index_path.unlink()
+        _drop_cache(conversation_id)
         return
 
     doc_ids = [doc_id for doc_id, _, _ in filtered]
@@ -57,21 +60,36 @@ def build_index(conversation_id: int) -> None:
     }
     with index_path.open("wb") as handle:
         pickle.dump(payload, handle)
+    _update_cache(conversation_id, payload, index_path)
 
 
 def delete_index(conversation_id: int) -> None:
     index_path = _index_path(conversation_id)
     if index_path.exists():
         index_path.unlink()
+    _drop_cache(conversation_id)
 
-def _load_index(index_path: Path) -> dict | None:
+_INDEX_CACHE: dict[int, dict[str, object]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _load_index(conversation_id: int) -> dict | None:
+    index_path = _index_path(conversation_id)
     if not index_path.exists():
+        _drop_cache(conversation_id)
         return None
+    mtime = index_path.stat().st_mtime
+    with _CACHE_LOCK:
+        cached = _INDEX_CACHE.get(conversation_id)
+        if cached and cached.get("mtime") == mtime:
+            return cached.get("payload")  # type: ignore[return-value]
     with index_path.open("rb") as handle:
-        return pickle.load(handle)
+        payload = pickle.load(handle)
+    _update_cache(conversation_id, payload, index_path)
+    return payload
 
 def search(query: str, settings: Settings, conversation_id: int) -> list[SearchResult]:
-    payload = _load_index(_index_path(conversation_id))
+    payload = _load_index(conversation_id)
     if payload is None:
         return []
 
@@ -118,3 +136,16 @@ def format_results(results: list[SearchResult], max_chars: int = 1200) -> str:
 
 def _index_path(conversation_id: int) -> Path:
     return RAG_INDEX_DIR / f"rag_{conversation_id}.pkl"
+
+
+def _update_cache(conversation_id: int, payload: dict, index_path: Path) -> None:
+    with _CACHE_LOCK:
+        _INDEX_CACHE[conversation_id] = {
+            "mtime": index_path.stat().st_mtime,
+            "payload": payload,
+        }
+
+
+def _drop_cache(conversation_id: int) -> None:
+    with _CACHE_LOCK:
+        _INDEX_CACHE.pop(conversation_id, None)

@@ -91,6 +91,54 @@ def fetch_fred_series(
     return _downsample(rows, max_points)
 
 
+def fetch_stooq_history(
+    symbol: str,
+    start_date: str,
+    end_date: str | None,
+    timeout: int,
+    max_points: int = 400,
+) -> list[dict[str, float | int | str]]:
+    if not symbol:
+        raise ValueError("symbol is required")
+    start_iso = _normalize_date(start_date, end=False)
+    end_iso = _normalize_date(end_date, end=True) if end_date else date.today().isoformat()
+    if start_iso > end_iso:
+        raise ValueError("start_date must be before end_date")
+
+    stooq_symbol = _normalize_stooq_symbol(symbol)
+    url = "https://stooq.com/q/d/l/"
+    params = {"s": stooq_symbol, "i": "d"}
+    response = requests.get(url, params=params, timeout=timeout)
+    response.raise_for_status()
+    if "No data" in response.text:
+        return []
+
+    reader = csv.DictReader(io.StringIO(response.text))
+    rows: list[dict[str, float | int | str]] = []
+    for row in reader:
+        obs_date = (row.get("Date") or "").strip()
+        if not obs_date:
+            continue
+        if obs_date < start_iso or obs_date > end_iso:
+            continue
+        close = _parse_float(row.get("Close"))
+        if close is None:
+            continue
+        rows.append(
+            {
+                "date": obs_date,
+                "open": _parse_float(row.get("Open")) or 0.0,
+                "high": _parse_float(row.get("High")) or 0.0,
+                "low": _parse_float(row.get("Low")) or 0.0,
+                "close": close,
+                "volume": _parse_int(row.get("Volume")) or 0,
+            }
+        )
+
+    rows.sort(key=lambda item: str(item.get("date", "")))
+    return _downsample_rows(rows, max_points)
+
+
 def _downsample(data: list[tuple[str, float]], max_points: int) -> list[tuple[str, float]]:
     if max_points <= 0 or len(data) <= max_points:
         return data
@@ -99,6 +147,49 @@ def _downsample(data: list[tuple[str, float]], max_points: int) -> list[tuple[st
     if sampled[-1] != data[-1]:
         sampled.append(data[-1])
     return sampled
+
+
+def _downsample_rows(
+    data: list[dict[str, float | int | str]], max_points: int
+) -> list[dict[str, float | int | str]]:
+    if max_points <= 0 or len(data) <= max_points:
+        return data
+    step = max(1, len(data) // max_points)
+    sampled = data[::step]
+    if sampled[-1] != data[-1]:
+        sampled.append(data[-1])
+    return sampled
+
+
+def _normalize_stooq_symbol(symbol: str) -> str:
+    cleaned = symbol.strip().lower()
+    if not cleaned:
+        return cleaned
+    if cleaned.endswith(".us"):
+        return cleaned
+    if "." in cleaned:
+        return f"{cleaned}.us"
+    return f"{cleaned}.us"
+
+
+def _parse_float(value: str | None) -> float | None:
+    raw = (value or "").strip()
+    if not raw or raw in {".", "NA", "N/A"}:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _parse_int(value: str | None) -> int | None:
+    raw = (value or "").strip()
+    if not raw or raw in {".", "NA", "N/A"}:
+        return None
+    try:
+        return int(float(raw))
+    except ValueError:
+        return None
 
 
 def _normalize_date(value: str | None, end: bool) -> str:

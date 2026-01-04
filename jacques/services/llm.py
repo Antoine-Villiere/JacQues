@@ -27,7 +27,7 @@ class LLMClient:
         use_stream = self.settings.llm_streaming if stream is None else stream
         kwargs = self._base_kwargs(model)
         kwargs["messages"] = messages
-        kwargs["temperature"] = 0.2
+        kwargs["temperature"] = 0.0 if tools else 0.2
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
@@ -46,7 +46,7 @@ class LLMClient:
     ) -> tuple[object, dict[str, Any]]:
         kwargs = self._base_kwargs(model)
         kwargs["messages"] = messages
-        kwargs["temperature"] = 0.2
+        kwargs["temperature"] = 0.0 if tools else 0.2
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"

@@ -6,7 +6,6 @@ __all__ = [
     "image_gen",
     "llm",
     "rag",
-    "pdf_tools",
     "tooling",
     "vision",
     "web_search",

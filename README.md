@@ -60,6 +60,7 @@ Notes:
 - Word/Excel edits with formatting preservation.
 - Image analysis (vision) and image generation.
 - Plotting (`plot_generate`, `plot_fred_series`).
+- Stock price history (`stock_history`) for market analysis.
 - Web search + news search (Brave API).
 - Web scraping for specific sites via CSS selector.
 - Task scheduler with cron (APScheduler).
@@ -72,7 +73,7 @@ Notes:
 ## UI notes
 
 - Files are listed on the right and open in an off-canvas editor/viewer.
-- PDF highlight mode opens a dedicated viewer and writes highlights into the file.
+- PDFs open in the built-in viewer on the right panel.
 - OnlyOffice editor can be launched from Settings (optional, best formatting fidelity).
 - Tool calls are hidden in chat unless a tool error occurs.
 
@@ -95,10 +96,10 @@ Tasks:
 - `task_schedule`, `task_list`, `task_delete`, `task_enable`
 
 Web:
-- `web_search`, `news_search`, `web_fetch` (supports CSS selector)
+- `web_search`, `news_search`, `web_fetch` (supports CSS selector), `stock_history`
 
 Project access:
-- `project_list_files`, `project_search`, `project_read_file`, `project_replace`
+- `project_list_files`, `project_search`, `project_read_file`, `project_replace`, `python_run`
 
 ## Apple Mail / Calendar automation (macOS)
 
@@ -108,6 +109,11 @@ System Settings -> Privacy & Security -> Automation
 Enable Calendar/Mail for the terminal/python process.
 
 Jacques will never delete or send emails. Drafts only.
+
+## macOS automation (AppleScript)
+
+When enabled, `macos_script` can run AppleScript snippets for native app control.
+Prefer non-destructive actions and ask before running anything irreversible.
 
 ## Storage
 
@@ -127,5 +133,3 @@ JACQUES_DATA_DIR=./data
 - OnlyOffice black/blank frame: verify `ONLYOFFICE_URL`, `APP_BASE_URL`, and Docker.
 - Mail/Calendar not creating: check macOS Automation permissions.
 - Web search returns empty: check `BRAVE_API_KEY`.
-- PDF highlight not working: ensure the PDF is text-based (not scanned).
-

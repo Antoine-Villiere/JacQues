@@ -5,8 +5,12 @@ from .config import DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 
@@ -84,18 +88,6 @@ def init_db() -> None:
         )
         conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS pdf_highlights (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id INTEGER NOT NULL,
-                page_number INTEGER,
-                text TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (document_id) REFERENCES documents(id)
-            )
-            """
-        )
-        conn.execute(
-            """
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 conversation_id INTEGER NOT NULL,
@@ -150,6 +142,35 @@ def init_db() -> None:
                     "UPDATE images SET conversation_id = ? WHERE conversation_id IS NULL",
                     (convo_id,),
                 )
+        conn.commit()
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_convo_id "
+            "ON messages(conversation_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_convo_branch_id "
+            "ON messages(conversation_id, branch_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_messages_convo_role "
+            "ON messages(conversation_id, role, branch_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_message_branches_convo "
+            "ON message_branches(conversation_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_documents_convo "
+            "ON documents(conversation_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_images_convo "
+            "ON images(conversation_id, id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_convo "
+            "ON scheduled_tasks(conversation_id, enabled, id)"
+        )
         conn.commit()
 
 
@@ -287,15 +308,6 @@ def delete_conversation(conversation_id: int) -> None:
             "DELETE FROM scheduled_tasks WHERE conversation_id = ?",
             (conversation_id,),
         )
-        conn.execute(
-            """
-            DELETE FROM pdf_highlights
-            WHERE document_id IN (
-                SELECT id FROM documents WHERE conversation_id = ?
-            )
-            """,
-            (conversation_id,),
-        )
         conn.execute("DELETE FROM documents WHERE conversation_id = ?", (conversation_id,))
         conn.execute("DELETE FROM images WHERE conversation_id = ?", (conversation_id,))
         conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
@@ -321,6 +333,16 @@ def add_message(
         )
         conn.commit()
         return int(cursor.lastrowid)
+
+
+def get_message(message_id: int) -> sqlite3.Row | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id, conversation_id, role, content, created_at, branch_id, edit_of "
+            "FROM messages WHERE id = ?",
+            (message_id,),
+        )
+        return cursor.fetchone()
 
 
 def add_branch(conversation_id: int, parent_branch: int, pivot_message_id: int) -> int:
@@ -660,32 +682,9 @@ def get_document_texts(conversation_id: int) -> list[dict]:
         if not docs:
             return []
 
-        highlight_map: dict[int, list[sqlite3.Row]] = {}
-        highlight_cursor = conn.execute(
-            """
-            SELECT document_id, page_number, text
-            FROM pdf_highlights
-            WHERE document_id IN (
-                SELECT id FROM documents WHERE conversation_id = ?
-            )
-            ORDER BY id ASC
-            """,
-            (conversation_id,),
-        )
-        for row in highlight_cursor.fetchall():
-            highlight_map.setdefault(int(row["document_id"]), []).append(row)
-
         results: list[dict] = []
         for doc in docs:
             text = doc["text"]
-            highlights = highlight_map.get(int(doc["id"]), [])
-            if highlights:
-                lines = []
-                for highlight in highlights:
-                    page = highlight["page_number"]
-                    suffix = f"p{page}" if page else "p?"
-                    lines.append(f"- {suffix}: {highlight['text']}")
-                text = f"{text}\n\nHighlights:\n" + "\n".join(lines)
             results.append({"id": doc["id"], "name": doc["name"], "text": text})
         return results
 
@@ -725,33 +724,6 @@ def update_document_text(document_id: int, text: str) -> None:
             (text, document_id),
         )
         conn.commit()
-
-
-def add_pdf_highlight(document_id: int, page_number: int | None, text: str) -> int:
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            INSERT INTO pdf_highlights (document_id, page_number, text, created_at)
-            VALUES (?, ?, ?, ?)
-            """,
-            (document_id, page_number, text, _now()),
-        )
-        conn.commit()
-        return int(cursor.lastrowid)
-
-
-def list_pdf_highlights(document_id: int) -> list[sqlite3.Row]:
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            SELECT id, document_id, page_number, text, created_at
-            FROM pdf_highlights
-            WHERE document_id = ?
-            ORDER BY id ASC
-            """,
-            (document_id,),
-        )
-        return list(cursor.fetchall())
 
 
 def add_image(

@@ -5,3 +5,10 @@
 
 # local data (user documents, db, uploads, generated files)
 data/
+
+# macOS
+.DS_Store
+
+# python cache
+__pycache__/
+*.pyc

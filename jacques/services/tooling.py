@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from datetime import datetime, timezone, timedelta, date
 from urllib.parse import urlencode, quote
@@ -12,7 +13,7 @@ from uuid import uuid4
 import subprocess
 import sys
 
-from ..config import BASE_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
+from ..config import BASE_DIR, EXPORTS_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
 from ..utils import safe_filename
 from .. import db
 from . import (
@@ -58,6 +59,7 @@ def build_tools(
     mail_enabled = _setting_enabled("tools_mail_enabled", True)
     calendar_enabled = _setting_enabled("tools_calendar_enabled", True)
     code_enabled = _setting_enabled("tools_code_enabled", True)
+    macos_enabled = _setting_enabled("tools_macos_enabled", True)
 
     tools.append(
         ToolSpec(
@@ -198,6 +200,22 @@ def build_tools(
             ]
         )
 
+    if macos_enabled:
+        tools.append(
+            ToolSpec(
+                name="macos_script",
+                description="Run an AppleScript snippet to control native macOS apps.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "script": {"type": "string"},
+                    },
+                    "required": ["script"],
+                },
+                handler=_tool_macos_script,
+            )
+        )
+
     tools.extend(
         [
             ToolSpec(
@@ -317,6 +335,39 @@ def build_tools(
                         "required": ["path", "old_text", "new_text"],
                     },
                     handler=_tool_project_replace,
+                ),
+                ToolSpec(
+                    name="python_run",
+                    description=(
+                        "Run a short Python snippet or a script file in the project workspace "
+                        "for quick calculations, file generation, or utilities."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "path": {"type": "string"},
+                            "args": {"type": "array", "items": {"type": "string"}},
+                            "stdin": {"type": "string"},
+                            "timeout": {"type": "integer"},
+                        },
+                    },
+                    handler=_tool_python_run,
+                ),
+                ToolSpec(
+                    name="python",
+                    description="Alias of python_run for local Python snippets.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "path": {"type": "string"},
+                            "args": {"type": "array", "items": {"type": "string"}},
+                            "stdin": {"type": "string"},
+                            "timeout": {"type": "integer"},
+                        },
+                    },
+                    handler=_tool_python_run,
                 ),
             ]
         )
@@ -578,6 +629,25 @@ def build_tools(
                     },
                     handler=_tool_web_fetch,
                 ),
+                ToolSpec(
+                    name="stock_history",
+                    description=(
+                        "Fetch daily stock price history (OHLCV) from Stooq. "
+                        "Use for equities performance and return analysis."
+                    ),
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string"},
+                            "start_date": {"type": "string"},
+                            "end_date": {"type": ["string", "null"]},
+                            "max_points": {"type": "integer"},
+                            "filename": {"type": "string"},
+                        },
+                        "required": ["symbol", "start_date"],
+                    },
+                    handler=_tool_stock_history,
+                ),
             ]
         )
 
@@ -753,6 +823,19 @@ def _run_osascript(lines: list[str]) -> tuple[bool, str]:
     if result.returncode != 0:
         return False, (result.stderr or result.stdout).strip()
     return True, (result.stdout or "").strip()
+
+
+def _tool_macos_script(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    script = str(args.get("script", "")).strip()
+    if not script:
+        return "Provide an AppleScript snippet to run."
+    lines = [line for line in script.splitlines() if line.strip()]
+    if not lines:
+        return "Provide an AppleScript snippet to run."
+    ok, output = _run_osascript(lines)
+    if ok:
+        return output or "AppleScript executed."
+    return f"AppleScript failed: {output}"
 
 
 def _create_mail_draft_apple_mail(
@@ -1592,6 +1675,66 @@ def _tool_project_replace(args: dict[str, Any], settings: Settings, conversation
     return f"Replaced {replaced} occurrence(s) in {path_value}."
 
 
+def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    code = str(args.get("code") or "").strip()
+    path_value = str(args.get("path") or "").strip()
+    if not code and not path_value:
+        return "Provide code or a script path."
+    if code and path_value:
+        return "Provide either code or path, not both."
+
+    timeout = args.get("timeout")
+    timeout_value = int(timeout) if isinstance(timeout, int) and timeout > 0 else 15
+    timeout_value = min(timeout_value, 60)
+
+    extra_args = args.get("args") or []
+    if not isinstance(extra_args, list):
+        extra_args = [extra_args]
+    extra_args = [str(item) for item in extra_args if str(item).strip()]
+    stdin_text = str(args.get("stdin") or "")
+
+    if code:
+        cmd = [sys.executable, "-c", code]
+    else:
+        try:
+            script_path = _resolve_project_path(path_value)
+        except ValueError as exc:
+            return str(exc)
+        if not script_path.exists() or not script_path.is_file():
+            return "Python file not found."
+        if script_path.suffix.lower() != ".py":
+            return "Script must be a .py file."
+        cmd = [sys.executable, str(script_path)]
+
+    cmd.extend(extra_args)
+    try:
+        result = subprocess.run(
+            cmd,
+            input=stdin_text if stdin_text else None,
+            capture_output=True,
+            text=True,
+            cwd=str(BASE_DIR),
+            timeout=timeout_value,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Python run timed out after {timeout_value}s."
+    except Exception as exc:
+        return f"Python run failed: {exc}"
+
+    output = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+    combined = output
+    if err:
+        combined = f"{combined}\n\nstderr:\n{err}".strip() if combined else f"stderr:\n{err}"
+    if not combined:
+        combined = "(no output)"
+    if len(combined) > 6000:
+        combined = combined[:6000].rsplit(" ", 1)[0] + "..."
+
+    status = "ok" if result.returncode == 0 else f"exit {result.returncode}"
+    return f"Python run {status}.\n\n{combined}"
+
+
 def _tool_rag_search(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
     query = str(args.get("query", "")).strip()
     if not query:
@@ -1662,6 +1805,73 @@ def _tool_web_fetch(args: dict[str, Any], settings: Settings, conversation_id: i
         max_chars=max_value,
     )
     return content
+
+
+def _tool_stock_history(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    symbol = str(args.get("symbol", "")).strip()
+    start_date = str(args.get("start_date", "")).strip()
+    raw_end = args.get("end_date")
+    end_date = None if raw_end is None else str(raw_end).strip() or None
+    if not symbol or not start_date:
+        return "Provide symbol and start_date (YYYY-MM-DD)."
+
+    max_points = args.get("max_points")
+    if not isinstance(max_points, int) or max_points <= 0:
+        max_points = 400
+
+    filename = safe_filename(args.get("filename", ""))
+    if filename and not Path(filename).suffix:
+        filename = f"{filename}.csv"
+
+    try:
+        data = market_data.fetch_stooq_history(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            timeout=settings.web_timeout,
+            max_points=max_points,
+        )
+    except ValueError as exc:
+        return (
+            f"{exc}. Use YYYY-MM-DD, YYYY-MM, YYYY, or Month YYYY "
+            "(e.g. 2025-07-01 or July 2025)."
+        )
+
+    if not data:
+        return "No data returned for this symbol."
+
+    csv_path = ""
+    if filename:
+        EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = EXPORTS_DIR / filename
+        if path.exists():
+            stem = path.stem
+            filename = f"{stem}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}{path.suffix}"
+            path = EXPORTS_DIR / filename
+        with path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(["date", "open", "high", "low", "close", "volume"])
+            for row in data:
+                writer.writerow(
+                    [
+                        row.get("date"),
+                        row.get("open"),
+                        row.get("high"),
+                        row.get("low"),
+                        row.get("close"),
+                        row.get("volume"),
+                    ]
+                )
+        csv_path = str(path)
+
+    payload = {
+        "symbol": symbol,
+        "start_date": start_date,
+        "end_date": end_date,
+        "points": data,
+        "csv_path": csv_path or None,
+    }
+    return json.dumps(payload, ensure_ascii=True)
 
 
 def _tool_excel_create(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:

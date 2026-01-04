@@ -1,13 +1,15 @@
 from dataclasses import dataclass, field
 from pathlib import Path
+import locale
 import os
+import time
+from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 load_dotenv(BASE_DIR / ".env")
-load_dotenv(BASE_DIR / ".nev")
 
 _data_dir_env = os.getenv("JACQUES_DATA_DIR")
 if _data_dir_env:
@@ -114,3 +116,50 @@ def ensure_dirs() -> None:
         RAG_INDEX_DIR,
     ]:
         path.mkdir(parents=True, exist_ok=True)
+
+
+def detect_system_timezone(default: str = "UTC") -> str:
+    tz_env = os.getenv("TZ")
+    if tz_env and _valid_timezone(tz_env):
+        return tz_env
+    try:
+        localtime = Path("/etc/localtime")
+        if localtime.exists():
+            target = localtime.resolve()
+            if "zoneinfo" in target.parts:
+                idx = target.parts.index("zoneinfo")
+                zone = "/".join(target.parts[idx + 1 :])
+                if zone and _valid_timezone(zone):
+                    return zone
+    except Exception:
+        pass
+    for name in time.tzname:
+        if name and _valid_timezone(name):
+            return name
+    return default
+
+
+def detect_system_locale(default: str = "en_US") -> str:
+    lang = None
+    try:
+        lang, _ = locale.getlocale()
+    except Exception:
+        lang = None
+    if not lang:
+        try:
+            lang, _ = locale.getdefaultlocale()
+        except Exception:
+            lang = None
+    if not lang:
+        lang = os.getenv("LANG")
+    if lang:
+        return str(lang).split(".")[0]
+    return default
+
+
+def _valid_timezone(name: str) -> bool:
+    try:
+        ZoneInfo(str(name))
+        return True
+    except Exception:
+        return False

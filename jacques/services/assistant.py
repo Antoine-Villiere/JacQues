@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from typing import Any, Callable
 from pathlib import Path
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 import json
 import re
 
-from ..config import Settings
+from ..config import Settings, detect_system_locale, detect_system_timezone
 from .. import db
 from . import commands, doc_ingest, rag, web_search
 from .llm import LLMClient
@@ -14,7 +16,7 @@ from .tooling import build_tools, execute_tool
 
 SYSTEM_PROMPT = (
     "You are Jacques, a capable assistant. "
-    "Respond in English. "
+    "Respond in the user's language. Default to English if unsure. "
     "You manage multiple conversations with memory, answer questions, "
     "and use tools proactively when helpful. "
     "If the user refers to an uploaded image, check available images and use "
@@ -34,12 +36,15 @@ SYSTEM_PROMPT = (
     "if multiple calendars exist, prefer a writable calendar or ask for the name. "
     "Use task_schedule for reminders or recurring tasks (cron syntax) and do not store reminders in memory. "
     "Use project_list_files, project_read_file, project_search, and project_replace to inspect or update the project; avoid overwriting full files. "
+    "Use python_run (or python) for quick local scripts (calculations, time, file generation). "
     "Use excel_read_sheet to read data from specific Excel sheets when referenced. "
     "Use news_search for current news queries. Use web_fetch with a URL (and optional CSS selector) to scrape specific sites. "
+    "Use stock_history to fetch stock price history when asked for market performance, then analyze returns/patterns and plot with plot_generate. "
     "When editing Word/Excel/PDF files, preserve original formatting; "
     "avoid rewriting entire documents when a targeted edit suffices. "
     "You can generate plots with plot_generate or plot_fred_series and show the image. "
-    "For market indices, prefer plot_fred_series (e.g., NASDAQCOM for Nasdaq Composite)."
+    "For market indices, prefer plot_fred_series (e.g., NASDAQCOM for Nasdaq Composite). "
+    "Use macos_script (AppleScript) for native macOS automation when requested; avoid destructive actions without confirmation. "
 )
 
 AUTO_TITLE_INTERVAL = 6
@@ -358,6 +363,11 @@ def _tool_budget(user_message: str, settings: Settings) -> int:
     return base
 
 
+def _is_tool_json_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "Failed to parse tool call arguments as JSON" in message
+
+
 def _run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
@@ -392,7 +402,34 @@ def _run_tool_loop(
         try:
             response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
         except Exception as exc:
-            return f"LLM error: {exc}"
+            if _is_tool_json_error(exc):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tool calls must use strict JSON with double quotes and no trailing commas. "
+                            "If you cannot provide valid JSON, respond without tools."
+                        ),
+                    }
+                )
+                try:
+                    response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
+                except Exception as inner_exc:
+                    if _is_tool_json_error(inner_exc):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": "Do not call tools. Respond with the final answer only.",
+                            }
+                        )
+                        try:
+                            response = llm.chat(messages, model=settings.text_model, tools=None)
+                        except Exception as final_exc:
+                            return f"LLM error: {final_exc}"
+                        return str(response.get("content") or "").strip()
+                    return f"LLM error: {inner_exc}"
+            else:
+                return f"LLM error: {exc}"
         tool_calls = response.get("tool_calls") or []
         content = response.get("content") or ""
         if not tool_calls:
@@ -499,22 +536,57 @@ def _run_tool_loop_streaming(
     max_steps: int | None = None,
 ) -> str:
     def stream_or_chat(model: str, toolset: list[dict[str, Any]] | None):
-        if settings.llm_streaming and on_token:
-            iterator, state = llm.stream_chat(messages, model=model, tools=toolset)
-            for token in iterator:
-                if should_cancel and should_cancel():
-                    state["cancelled"] = True
-                    break
-                on_token(token)
-            content = "".join(state["content_parts"]).strip()
-            tool_calls = _ordered_tool_calls(state["tool_calls"])
-            return content, tool_calls, bool(state.get("cancelled"))
-        response = llm.chat(messages, model=model, tools=toolset)
-        return (
-            str(response.get("content") or "").strip(),
-            response.get("tool_calls") or [],
-            False,
-        )
+        try:
+            if settings.llm_streaming and on_token:
+                iterator, state = llm.stream_chat(messages, model=model, tools=toolset)
+                for token in iterator:
+                    if should_cancel and should_cancel():
+                        state["cancelled"] = True
+                        break
+                    on_token(token)
+                content = "".join(state["content_parts"]).strip()
+                tool_calls = _ordered_tool_calls(state["tool_calls"])
+                return content, tool_calls, bool(state.get("cancelled"))
+            response = llm.chat(messages, model=model, tools=toolset, stream=False)
+            return (
+                str(response.get("content") or "").strip(),
+                response.get("tool_calls") or [],
+                False,
+            )
+        except Exception as exc:
+            if toolset and _is_tool_json_error(exc):
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "Tool calls must use strict JSON with double quotes and no trailing commas. "
+                            "If you cannot provide valid JSON, respond without tools."
+                        ),
+                    }
+                )
+                try:
+                    response = llm.chat(messages, model=model, tools=toolset, stream=False)
+                    return (
+                        str(response.get("content") or "").strip(),
+                        response.get("tool_calls") or [],
+                        False,
+                    )
+                except Exception as inner_exc:
+                    if _is_tool_json_error(inner_exc):
+                        messages.append(
+                            {
+                                "role": "system",
+                                "content": "Do not call tools. Respond with the final answer only.",
+                            }
+                        )
+                        response = llm.chat(messages, model=model, tools=None, stream=False)
+                        return (
+                            str(response.get("content") or "").strip(),
+                            [],
+                            False,
+                        )
+                    raise
+            raise
 
     if not tools:
         content, _, cancelled = stream_or_chat(settings.reasoning_model, None)
@@ -872,6 +944,15 @@ def _image_context(conversation_id: int, limit: int = 5) -> str:
     return "\n".join(lines)
 
 
+def _format_local_time(tz_name: str) -> str:
+    try:
+        tz = ZoneInfo(tz_name)
+        now = datetime.now(tz)
+    except Exception:
+        now = datetime.now(timezone.utc)
+    return now.strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _build_system_prompt() -> str:
     stored_prompt = db.get_setting("system_prompt")
     base_prompt = stored_prompt.strip() if stored_prompt and stored_prompt.strip() else SYSTEM_PROMPT
@@ -880,8 +961,14 @@ def _build_system_prompt() -> str:
     occupation = (db.get_setting("user_occupation") or "").strip()
     about = (db.get_setting("user_about") or "").strip()
     memory = (db.get_setting("global_memory") or "").strip()
+    locale_name = (db.get_setting("app_locale") or "").strip() or detect_system_locale()
+    tz_name = (db.get_setting("app_timezone") or "").strip() or detect_system_timezone()
+    local_time = _format_local_time(tz_name)
 
-    blocks = [base_prompt]
+    blocks = [base_prompt, "Language: respond in the user's language unless they request otherwise."]
+    blocks.append(
+        f"Local settings: timezone={tz_name}, locale={locale_name}, local_time={local_time}."
+    )
     profile_lines = []
     if nickname:
         profile_lines.append(f"- Nickname: {nickname}")
