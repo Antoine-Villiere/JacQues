@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 from pathlib import Path
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -17,34 +17,15 @@ from .tooling import build_tools, execute_tool
 SYSTEM_PROMPT = (
     "You are Jacques, a capable assistant. "
     "Respond in the user's language. Default to English if unsure. "
-    "You manage multiple conversations with memory, answer questions, "
-    "and use tools proactively when helpful. "
-    "If the user refers to an uploaded image, check available images and use "
-    "image_describe to analyze the relevant file. "
+    "You manage multiple conversations with memory and answer questions. "
     "If the user mentions @\"filename\" or @filename, treat it as a direct reference to that document. "
     "If details are missing, ask a brief follow-up question. "
     "When tools are used, summarize what was done and the result. "
-    "If the user asks multiple tasks in one message, handle every item and use multiple tools if needed. "
+    "If the user asks multiple tasks in one message, handle every item. "
     "Never include tool call logs or a 'Tools used' section in the response. "
     "Decide yourself when to update memory: only store stable preferences "
     "or enduring facts the user would expect you to remember. "
-    "If unsure, ask first. Use the memory_append tool when appropriate. "
-    "Use email_draft to compose emails and open the user's mail app when asked. "
-    "Use mail_search and mail_read to access Apple Mail when asked; never delete or send emails. "
-    "For email recaps (e.g., today/yesterday), use mail_search with since_days and only_inbox. "
-    "Use calendar_list and calendar_find to inspect calendars/events, then calendar_event to create events; "
-    "if multiple calendars exist, prefer a writable calendar or ask for the name. "
-    "Use task_schedule for reminders or recurring tasks (cron syntax) and do not store reminders in memory. "
-    "Use project_list_files, project_read_file, project_search, and project_replace to inspect or update the project; avoid overwriting full files. "
-    "Use python_run (or python) for quick local scripts (calculations, time, file generation). "
-    "Use excel_read_sheet to read data from specific Excel sheets when referenced. "
-    "Use news_search for current news queries. Use web_fetch with a URL (and optional CSS selector) to scrape specific sites. "
-    "Use stock_history to fetch stock price history when asked for market performance, then analyze returns/patterns and plot with plot_generate. "
-    "When editing Word/Excel/PDF files, preserve original formatting; "
-    "avoid rewriting entire documents when a targeted edit suffices. "
-    "You can generate plots with plot_generate or plot_fred_series and show the image. "
-    "For market indices, prefer plot_fred_series (e.g., NASDAQCOM for Nasdaq Composite). "
-    "Use macos_script (AppleScript) for native macOS automation when requested; avoid destructive actions without confirmation. "
+    "If unsure, ask first."
 )
 
 AUTO_TITLE_INTERVAL = 6
@@ -81,7 +62,7 @@ def respond(
         settings, conversation_id=conversation_id, use_rag=use_rag, use_web=use_web
     )
 
-    messages = [{"role": "system", "content": _build_system_prompt()}]
+    messages = [{"role": "system", "content": _build_system_prompt(tool_map.keys())}]
     active_context = _active_file_context(active_file)
     if active_context:
         messages.append({"role": "system", "content": active_context})
@@ -178,7 +159,7 @@ def respond_streaming(
         settings, conversation_id=conversation_id, use_rag=use_rag, use_web=use_web
     )
 
-    messages = [{"role": "system", "content": _build_system_prompt()}]
+    messages = [{"role": "system", "content": _build_system_prompt(tool_map.keys())}]
     active_context = _active_file_context(active_file)
     if active_context:
         messages.append({"role": "system", "content": active_context})
@@ -368,6 +349,20 @@ def _is_tool_json_error(exc: Exception) -> bool:
     return "Failed to parse tool call arguments as JSON" in message
 
 
+def _is_tool_choice_error(exc: Exception) -> bool:
+    message = str(exc)
+    return "Tool choice is none" in message or "tool_use_failed" in message
+
+
+def _replace_system_prompt(messages: list[dict[str, Any]], prompt: str) -> list[dict[str, Any]]:
+    updated = list(messages)
+    if updated and updated[0].get("role") == "system":
+        updated[0] = {"role": "system", "content": prompt}
+    else:
+        updated.insert(0, {"role": "system", "content": prompt})
+    return updated
+
+
 def _run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
@@ -384,8 +379,16 @@ def _run_tool_loop(
         return "Stopped by user."
     if not tools:
         try:
-            response = llm.chat(messages, model=settings.reasoning_model)
+            safe_messages = _replace_system_prompt(
+                messages, _build_system_prompt(tool_names=[], tools_enabled=False)
+            )
+            response = llm.chat(safe_messages, model=settings.reasoning_model)
         except Exception as exc:
+            if _is_tool_choice_error(exc):
+                return (
+                    "Tool access is disabled for this response. "
+                    "Enable tools in Settings to run analyses."
+                )
             return f"LLM error: {exc}"
         return str(response.get("content") or "").strip()
 
@@ -396,6 +399,7 @@ def _run_tool_loop(
     tool_summaries: list[tuple[str, str]] = []
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
+    last_content = ""
     while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
@@ -416,39 +420,19 @@ def _run_tool_loop(
                     response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
                 except Exception as inner_exc:
                     if _is_tool_json_error(inner_exc):
-                        messages.append(
-                            {
-                                "role": "system",
-                                "content": "Do not call tools. Respond with the final answer only.",
-                            }
-                        )
-                        try:
-                            response = llm.chat(messages, model=settings.text_model, tools=None)
-                        except Exception as final_exc:
-                            return f"LLM error: {final_exc}"
-                        return str(response.get("content") or "").strip()
+                        if last_content:
+                            return _append_tool_summary(
+                                last_content, tool_summaries, latest_sources
+                            )
+                        return "Tool call formatting failed. Please try again."
                     return f"LLM error: {inner_exc}"
             else:
                 return f"LLM error: {exc}"
         tool_calls = response.get("tool_calls") or []
         content = response.get("content") or ""
+        last_content = str(content).strip()
         if not tool_calls:
             final_content = str(content).strip()
-            if used_tools and settings.text_model != settings.reasoning_model:
-                try:
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": "Provide the final answer now. Do not call tools.",
-                        }
-                    )
-                    text_response = llm.chat(messages, model=settings.text_model, tools=None)
-                except Exception as exc:
-                    return f"LLM error: {exc}"
-                text_content = str(text_response.get("content") or "").strip()
-                return _append_tool_summary(
-                    text_content or final_content, tool_summaries, latest_sources
-                )
             return _append_tool_summary(final_content, tool_summaries, latest_sources)
 
         if last_tool_calls is not None and tool_calls == last_tool_calls:
@@ -507,19 +491,9 @@ def _run_tool_loop(
             "content": "Tool budget reached. Provide the best possible final answer now.",
         }
     )
-    try:
-        messages.append(
-            {
-                "role": "system",
-                "content": "Do not call tools. Respond with the final answer only.",
-            }
-        )
-        response = llm.chat(messages, model=settings.text_model, tools=None)
-    except Exception as exc:
-        return f"LLM error: {exc}"
-    return _append_tool_summary(
-        str(response.get("content") or "").strip(), tool_summaries, latest_sources
-    )
+    if last_content:
+        return _append_tool_summary(last_content, tool_summaries, latest_sources)
+    return "Tool budget reached. Please rephrase or add constraints."
 
 
 def _run_tool_loop_streaming(
@@ -535,10 +509,17 @@ def _run_tool_loop_streaming(
     should_cancel: Callable[[], bool] | None = None,
     max_steps: int | None = None,
 ) -> str:
-    def stream_or_chat(model: str, toolset: list[dict[str, Any]] | None):
+    def stream_or_chat(
+        model: str,
+        toolset: list[dict[str, Any]] | None,
+        message_list: list[dict[str, Any]] | None = None,
+    ):
+        active_messages = message_list or messages
         try:
             if settings.llm_streaming and on_token:
-                iterator, state = llm.stream_chat(messages, model=model, tools=toolset)
+                iterator, state = llm.stream_chat(
+                    active_messages, model=model, tools=toolset
+                )
                 for token in iterator:
                     if should_cancel and should_cancel():
                         state["cancelled"] = True
@@ -547,7 +528,7 @@ def _run_tool_loop_streaming(
                 content = "".join(state["content_parts"]).strip()
                 tool_calls = _ordered_tool_calls(state["tool_calls"])
                 return content, tool_calls, bool(state.get("cancelled"))
-            response = llm.chat(messages, model=model, tools=toolset, stream=False)
+            response = llm.chat(active_messages, model=model, tools=toolset, stream=False)
             return (
                 str(response.get("content") or "").strip(),
                 response.get("tool_calls") or [],
@@ -555,7 +536,7 @@ def _run_tool_loop_streaming(
             )
         except Exception as exc:
             if toolset and _is_tool_json_error(exc):
-                messages.append(
+                retry_messages = list(active_messages) + [
                     {
                         "role": "system",
                         "content": (
@@ -563,9 +544,11 @@ def _run_tool_loop_streaming(
                             "If you cannot provide valid JSON, respond without tools."
                         ),
                     }
-                )
+                ]
                 try:
-                    response = llm.chat(messages, model=model, tools=toolset, stream=False)
+                    response = llm.chat(
+                        retry_messages, model=model, tools=toolset, stream=False
+                    )
                     return (
                         str(response.get("content") or "").strip(),
                         response.get("tool_calls") or [],
@@ -573,23 +556,38 @@ def _run_tool_loop_streaming(
                     )
                 except Exception as inner_exc:
                     if _is_tool_json_error(inner_exc):
-                        messages.append(
+                        final_messages = list(active_messages) + [
                             {
                                 "role": "system",
                                 "content": "Do not call tools. Respond with the final answer only.",
                             }
+                        ]
+                        response = llm.chat(
+                            final_messages, model=model, tools=None, stream=False
                         )
-                        response = llm.chat(messages, model=model, tools=None, stream=False)
                         return (
                             str(response.get("content") or "").strip(),
                             [],
                             False,
                         )
-                    raise
+                raise
             raise
 
     if not tools:
-        content, _, cancelled = stream_or_chat(settings.reasoning_model, None)
+        safe_messages = _replace_system_prompt(
+            messages, _build_system_prompt(tool_names=[], tools_enabled=False)
+        )
+        try:
+            content, _, cancelled = stream_or_chat(
+                settings.reasoning_model, None, safe_messages
+            )
+        except Exception as exc:
+            if _is_tool_choice_error(exc):
+                return (
+                    "Tool access is disabled for this response. "
+                    "Enable tools in Settings to run analyses."
+                )
+            raise
         if cancelled:
             return f"{content}\n\n(Stopped by user.)".strip() if content else "Stopped by user."
         return content
@@ -601,33 +599,15 @@ def _run_tool_loop_streaming(
     tool_summaries: list[tuple[str, str]] = []
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
+    last_content = ""
     while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
         content, tool_calls, cancelled = stream_or_chat(settings.reasoning_model, tools)
         if cancelled:
             return f"{content}\n\n(Stopped by user.)".strip() if content else "Stopped by user."
+        last_content = str(content).strip()
         if not tool_calls:
-            if used_tools and settings.text_model != settings.reasoning_model:
-                messages.append(
-                    {
-                        "role": "system",
-                        "content": "Provide the final answer now. Do not call tools.",
-                    }
-                )
-                text_content, text_tool_calls, cancelled_text = stream_or_chat(
-                    settings.text_model, None
-                )
-                if cancelled_text:
-                    return (
-                        f"{text_content}\n\n(Stopped by user.)".strip()
-                        if text_content
-                        else "Stopped by user."
-                    )
-                if not text_tool_calls:
-                    return _append_tool_summary(
-                        text_content or content, tool_summaries, latest_sources
-                    )
             return _append_tool_summary(content, tool_summaries, latest_sources)
 
         if last_tool_calls is not None and tool_calls == last_tool_calls:
@@ -692,10 +672,9 @@ def _run_tool_loop_streaming(
             "content": "Do not call tools. Respond with the final answer only.",
         }
     )
-    final_content, _, cancelled = stream_or_chat(settings.text_model, None)
-    if cancelled:
-        return f"{final_content}\n\n(Stopped by user.)".strip() if final_content else "Stopped by user."
-    return _append_tool_summary(final_content, tool_summaries, latest_sources)
+    if last_content:
+        return _append_tool_summary(last_content, tool_summaries, latest_sources)
+    return "Tool budget reached. Please rephrase or add constraints."
 
 
 def _ordered_tool_calls(tool_calls: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
@@ -953,9 +932,89 @@ def _format_local_time(tz_name: str) -> str:
     return now.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _build_system_prompt() -> str:
+def _tool_guidance(tool_names: Iterable[str]) -> list[str]:
+    names = {str(name) for name in tool_names}
+    if not names:
+        return []
+    lines: list[str] = ["Use tools proactively when helpful."]
+    if "image_describe" in names:
+        lines.append(
+            "If the user refers to an uploaded image, check available images and use image_describe."
+        )
+    if "memory_append" in names:
+        lines.append(
+            "Use memory_append to store stable preferences or enduring facts the user would expect you to remember."
+        )
+    if "email_draft" in names:
+        lines.append("Use email_draft to compose emails and open the user's mail app when asked.")
+    if "mail_search" in names or "mail_read" in names:
+        lines.append(
+            "Use mail_search and mail_read to access Apple Mail when asked; never delete or send emails."
+        )
+        lines.append(
+            "For email recaps (e.g., today/yesterday), use mail_search with since_days and only_inbox."
+        )
+    if "calendar_list" in names or "calendar_find" in names or "calendar_event" in names:
+        lines.append(
+            "Use calendar_list and calendar_find to inspect calendars/events, then calendar_event to create events; "
+            "if multiple calendars exist, prefer a writable calendar or ask for the name."
+        )
+    if "task_schedule" in names:
+        lines.append(
+            "Use task_schedule for reminders or recurring tasks (cron syntax) and do not store reminders in memory."
+        )
+    if "project_list_files" in names or "project_read_file" in names:
+        lines.append(
+            "Use project_list_files, project_read_file, project_search, and project_replace to inspect or update the project; "
+            "avoid overwriting full files."
+        )
+    if "python_run" in names or "python" in names:
+        lines.append(
+            "Use python_run (or python) for quick local scripts (calculations, time, file generation)."
+        )
+    if "excel_read_sheet" in names:
+        lines.append(
+            "Use excel_read_sheet to read data from specific Excel sheets when referenced."
+        )
+    if "rag_search" in names:
+        lines.append("Use rag_search to search ingested documents when needed.")
+    if "news_search" in names:
+        lines.append("Use news_search for current news queries.")
+    if "web_fetch" in names:
+        lines.append("Use web_fetch with a URL (and optional CSS selector) to scrape specific sites.")
+    if "stock_history" in names:
+        if "python_run" in names or "python" in names:
+            lines.append(
+                "For stock analysis, call stock_history, then use python_run to compute returns/patterns and plot with plot_generate."
+            )
+        else:
+            lines.append(
+                "For stock analysis, call stock_history and compute returns/patterns in text; plot if plot_generate is available."
+            )
+    if "plot_generate" in names or "plot_fred_series" in names:
+        lines.append("You can generate plots with plot_generate or plot_fred_series and show the image.")
+    if "plot_fred_series" in names:
+        lines.append("For market indices, prefer plot_fred_series (e.g., NASDAQCOM for Nasdaq Composite).")
+    if "macos_script" in names:
+        lines.append(
+            "Use macos_script (AppleScript) for native macOS automation when requested; avoid destructive actions without confirmation."
+        )
+    if {"word_create", "word_append", "word_replace", "excel_create", "excel_add_sheet", "excel_set_cell"} & names:
+        lines.append(
+            "When editing Word/Excel/PDF files, preserve original formatting; avoid rewriting entire documents when a targeted edit suffices."
+        )
+    return lines
+
+
+def _build_system_prompt(
+    tool_names: Iterable[str] | None = None,
+    tools_enabled: bool = True,
+) -> str:
     stored_prompt = db.get_setting("system_prompt")
-    base_prompt = stored_prompt.strip() if stored_prompt and stored_prompt.strip() else SYSTEM_PROMPT
+    if tools_enabled:
+        base_prompt = stored_prompt.strip() if stored_prompt and stored_prompt.strip() else SYSTEM_PROMPT
+    else:
+        base_prompt = SYSTEM_PROMPT
     custom_instructions = (db.get_setting("custom_instructions") or "").strip()
     nickname = (db.get_setting("user_nickname") or "").strip()
     occupation = (db.get_setting("user_occupation") or "").strip()
@@ -969,6 +1028,14 @@ def _build_system_prompt() -> str:
     blocks.append(
         f"Local settings: timezone={tz_name}, locale={locale_name}, local_time={local_time}."
     )
+    if tools_enabled:
+        guidance = _tool_guidance(tool_names or [])
+        if guidance:
+            blocks.append("Tool guidance:\n" + "\n".join(guidance))
+    else:
+        blocks.append(
+            "Tools are disabled for this response. Respond in plain text without tool calls or JSON."
+        )
     profile_lines = []
     if nickname:
         profile_lines.append(f"- Nickname: {nickname}")

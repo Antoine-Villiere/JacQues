@@ -1011,6 +1011,12 @@ def onlyoffice_callback():
     status = payload.get("status")
     download_url = payload.get("url")
     token = payload.get("token") or payload.get("jwt")
+    if not token:
+        auth_header = request.headers.get("Authorization") or ""
+        if auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+        elif auth_header:
+            token = auth_header.strip()
     doc_id = request.args.get("doc_id")
     if not doc_id:
         return jsonify({"error": 0})
@@ -1036,9 +1042,13 @@ def onlyoffice_callback():
                 )
                 response.raise_for_status()
                 path.write_bytes(response.content)
-                text = doc_ingest.extract_text(path)
-                db.update_document_text(doc_id_int, text)
-                rag.build_index(int(doc["conversation_id"]))
+                try:
+                    text = doc_ingest.extract_text(path)
+                except Exception:
+                    text = None
+                if text is not None:
+                    db.update_document_text(doc_id_int, text)
+                    rag.build_index(int(doc["conversation_id"]))
             except Exception as exc:
                 return jsonify({"error": 1, "message": str(exc)})
     return jsonify({"error": 0})
