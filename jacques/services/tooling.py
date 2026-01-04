@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone, timedelta, date
 from urllib.parse import urlencode, quote
 from dataclasses import dataclass
+import threading
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -35,6 +36,17 @@ class ToolSpec:
     handler: Callable[[dict[str, Any], Settings, int], str]
 
 
+OSASCRIPT_LOCK = threading.Lock()
+OSASCRIPT_TIMEOUT = 12
+
+
+def _setting_enabled(key: str, default: bool = True) -> bool:
+    value = db.get_setting(key)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def build_tools(
     settings: Settings,
     conversation_id: int,
@@ -42,6 +54,10 @@ def build_tools(
     use_web: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, ToolSpec]]:
     tools: list[ToolSpec] = []
+    web_enabled = _setting_enabled("tools_web_enabled", True)
+    mail_enabled = _setting_enabled("tools_mail_enabled", True)
+    calendar_enabled = _setting_enabled("tools_calendar_enabled", True)
+    code_enabled = _setting_enabled("tools_code_enabled", True)
 
     tools.append(
         ToolSpec(
@@ -82,72 +98,108 @@ def build_tools(
         )
     )
 
+    if mail_enabled:
+        tools.extend(
+            [
+                ToolSpec(
+                    name="email_draft",
+                    description="Create an email draft and open it in the user's mail app.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "to": {"type": ["string", "array"]},
+                            "subject": {"type": "string"},
+                            "body": {"type": "string"},
+                            "cc": {"type": ["string", "array"]},
+                            "bcc": {"type": ["string", "array"]},
+                        },
+                    },
+                    handler=_tool_email_draft,
+                ),
+                ToolSpec(
+                    name="mail_search",
+                    description="Search Apple Mail and return matching messages.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "account": {"type": "string"},
+                            "mailbox": {"type": "string"},
+                            "since_days": {"type": "integer"},
+                            "limit": {"type": "integer"},
+                            "search_body": {"type": "boolean"},
+                            "only_inbox": {"type": "boolean"},
+                        },
+                    },
+                    handler=_tool_mail_search,
+                ),
+                ToolSpec(
+                    name="mail_read",
+                    description="Read a specific Apple Mail message by id.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "mail_id": {"type": "integer"},
+                            "message_id": {"type": "string"},
+                            "account": {"type": "string"},
+                            "mailbox": {"type": "string"},
+                            "max_chars": {"type": "integer"},
+                        },
+                    },
+                    handler=_tool_mail_read,
+                ),
+            ]
+        )
+
+    if calendar_enabled:
+        tools.extend(
+            [
+                ToolSpec(
+                    name="calendar_list",
+                    description="List Apple Calendar calendars and whether they are writable.",
+                    parameters={"type": "object", "properties": {}},
+                    handler=_tool_calendar_list,
+                ),
+                ToolSpec(
+                    name="calendar_find",
+                    description="Find calendar events by title and date range.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "start": {"type": "string"},
+                            "end": {"type": "string"},
+                            "calendar": {"type": "string"},
+                            "limit": {"type": "integer"},
+                        },
+                    },
+                    handler=_tool_calendar_find,
+                ),
+                ToolSpec(
+                    name="calendar_event",
+                    description="Create a calendar event (.ics) that opens in the user's calendar app.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "start": {"type": "string"},
+                            "end": {"type": "string"},
+                            "duration_minutes": {"type": "integer"},
+                            "all_day": {"type": "boolean"},
+                            "timezone": {"type": "string"},
+                            "calendar": {"type": "string"},
+                            "location": {"type": "string"},
+                            "description": {"type": "string"},
+                        },
+                        "required": ["title", "start"],
+                    },
+                    handler=_tool_calendar_event,
+                ),
+            ]
+        )
+
     tools.extend(
         [
-            ToolSpec(
-                name="email_draft",
-                description="Create an email draft and open it in the user's mail app.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "to": {"type": ["string", "array"]},
-                        "subject": {"type": "string"},
-                        "body": {"type": "string"},
-                        "cc": {"type": ["string", "array"]},
-                        "bcc": {"type": ["string", "array"]},
-                    },
-                },
-                handler=_tool_email_draft,
-            ),
-            ToolSpec(
-                name="mail_search",
-                description="Search Apple Mail and return matching messages.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "account": {"type": "string"},
-                        "mailbox": {"type": "string"},
-                        "since_days": {"type": "integer"},
-                        "limit": {"type": "integer"},
-                    },
-                },
-                handler=_tool_mail_search,
-            ),
-            ToolSpec(
-                name="mail_read",
-                description="Read a specific Apple Mail message by id.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "mail_id": {"type": "integer"},
-                        "message_id": {"type": "string"},
-                        "account": {"type": "string"},
-                        "mailbox": {"type": "string"},
-                        "max_chars": {"type": "integer"},
-                    },
-                },
-                handler=_tool_mail_read,
-            ),
-            ToolSpec(
-                name="calendar_event",
-                description="Create a calendar event (.ics) that opens in the user's calendar app.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string"},
-                        "start": {"type": "string"},
-                        "end": {"type": "string"},
-                        "duration_minutes": {"type": "integer"},
-                        "all_day": {"type": "boolean"},
-                        "timezone": {"type": "string"},
-                        "location": {"type": "string"},
-                        "description": {"type": "string"},
-                    },
-                    "required": ["title", "start"],
-                },
-                handler=_tool_calendar_event,
-            ),
             ToolSpec(
                 name="task_schedule",
                 description="Schedule a recurring task (cron) for reminders or web digests.",
@@ -200,68 +252,74 @@ def build_tools(
                 },
                 handler=_tool_task_enable,
             ),
-            ToolSpec(
-                name="project_list_files",
-                description="List files in the local project directory.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "pattern": {"type": "string"},
-                        "recursive": {"type": "boolean"},
-                        "include_hidden": {"type": "boolean"},
-                        "max": {"type": "integer"},
-                    },
-                },
-                handler=_tool_project_list_files,
-            ),
-            ToolSpec(
-                name="project_read_file",
-                description="Read a file from the local project directory.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "start_line": {"type": "integer"},
-                        "end_line": {"type": "integer"},
-                        "max_chars": {"type": "integer"},
-                    },
-                    "required": ["path"],
-                },
-                handler=_tool_project_read_file,
-            ),
-            ToolSpec(
-                name="project_search",
-                description="Search for text in project files.",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "path": {"type": "string"},
-                        "max_results": {"type": "integer"},
-                        "include_hidden": {"type": "boolean"},
-                    },
-                    "required": ["query"],
-                },
-                handler=_tool_project_search,
-            ),
-            ToolSpec(
-                name="project_replace",
-                description="Replace text in a project file (targeted update).",
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "old_text": {"type": "string"},
-                        "new_text": {"type": "string"},
-                        "count": {"type": "integer"},
-                    },
-                    "required": ["path", "old_text", "new_text"],
-                },
-                handler=_tool_project_replace,
-            ),
         ]
     )
+
+    if code_enabled:
+        tools.extend(
+            [
+                ToolSpec(
+                    name="project_list_files",
+                    description="List files in the local project directory.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "pattern": {"type": "string"},
+                            "recursive": {"type": "boolean"},
+                            "include_hidden": {"type": "boolean"},
+                            "max": {"type": "integer"},
+                        },
+                    },
+                    handler=_tool_project_list_files,
+                ),
+                ToolSpec(
+                    name="project_read_file",
+                    description="Read a file from the local project directory.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "start_line": {"type": "integer"},
+                            "end_line": {"type": "integer"},
+                            "max_chars": {"type": "integer"},
+                        },
+                        "required": ["path"],
+                    },
+                    handler=_tool_project_read_file,
+                ),
+                ToolSpec(
+                    name="project_search",
+                    description="Search for text in project files.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "path": {"type": "string"},
+                            "max_results": {"type": "integer"},
+                            "include_hidden": {"type": "boolean"},
+                        },
+                        "required": ["query"],
+                    },
+                    handler=_tool_project_search,
+                ),
+                ToolSpec(
+                    name="project_replace",
+                    description="Replace text in a project file (targeted update).",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "old_text": {"type": "string"},
+                            "new_text": {"type": "string"},
+                            "count": {"type": "integer"},
+                        },
+                        "required": ["path", "old_text", "new_text"],
+                    },
+                    handler=_tool_project_replace,
+                ),
+            ]
+        )
 
     tools.extend(
         [
@@ -305,6 +363,22 @@ def build_tools(
                     "required": ["filename", "sheet_name", "cell", "value"],
                 },
                 handler=_tool_excel_set_cell,
+            ),
+            ToolSpec(
+                name="excel_read_sheet",
+                description="Read data from a specific sheet in an Excel workbook.",
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "filename": {"type": "string"},
+                        "sheet_name": {"type": ["string", "integer"]},
+                        "document_id": {"type": "integer"},
+                        "max_rows": {"type": "integer"},
+                        "max_cols": {"type": "integer"},
+                    },
+                    "required": ["filename"],
+                },
+                handler=_tool_excel_read_sheet,
             ),
             ToolSpec(
                 name="word_create",
@@ -454,7 +528,7 @@ def build_tools(
             ]
         )
 
-    if use_web:
+    if use_web and web_enabled:
         tools.extend(
             [
                 ToolSpec(
@@ -664,7 +738,18 @@ def _run_osascript(lines: list[str]) -> tuple[bool, str]:
     args = ["osascript"]
     for line in lines:
         args.extend(["-e", line])
-    result = subprocess.run(args, capture_output=True, text=True)
+    try:
+        with OSASCRIPT_LOCK:
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=OSASCRIPT_TIMEOUT,
+            )
+    except subprocess.TimeoutExpired:
+        return False, "AppleScript timed out."
+    except Exception as exc:
+        return False, f"AppleScript failed: {exc}"
     if result.returncode != 0:
         return False, (result.stderr or result.stdout).strip()
     return True, (result.stdout or "").strip()
@@ -771,6 +856,9 @@ def _tool_calendar_event(args: dict[str, Any], settings: Settings, conversation_
     start_raw = args.get("start")
     end_raw = args.get("end")
     duration = args.get("duration_minutes")
+    calendar_name = str(args.get("calendar") or "").strip()
+    if not calendar_name:
+        calendar_name = str(db.get_setting("default_calendar") or "").strip()
     location = str(args.get("location") or "").strip()
     description = str(args.get("description") or "").strip()
 
@@ -835,6 +923,7 @@ def _tool_calendar_event(args: dict[str, Any], settings: Settings, conversation_
         end_raw=str(end_raw) if end_raw else "",
         all_day=all_day,
         tz=tz,
+        calendar_name=calendar_name,
         location=location,
         description=description,
     )
@@ -850,6 +939,7 @@ def _tool_calendar_event(args: dict[str, Any], settings: Settings, conversation_
         f"Title: {title}\n"
         f"Start: {start_raw}\n"
         f"End: {end_raw or ''}\n"
+        f"Calendar: {calendar_name or 'default writable'}\n"
         f"ICS: {url}"
     )
 
@@ -860,6 +950,7 @@ def _create_calendar_event_apple_calendar(
     end_raw: str,
     all_day: bool,
     tz: ZoneInfo,
+    calendar_name: str,
     location: str,
     description: str,
 ) -> tuple[bool, str] | None:
@@ -891,7 +982,20 @@ def _create_calendar_event_apple_calendar(
         'tell application "Calendar"',
         "activate",
         "if (count of calendars) is 0 then error \"No calendars available\"",
-        "set targetCal to first calendar whose writable is true",
+        f"set calendarName to {_osascript_literal(calendar_name)}",
+        "set targetCal to missing value",
+        "if calendarName is not \"\" then",
+        "set targetCals to calendars whose name is calendarName and writable is true",
+        "if (count of targetCals) is 0 then error \"No writable calendar named \" & calendarName",
+        "set targetCal to item 1 of targetCals",
+        "else",
+        "set targetCals to calendars whose writable is true",
+        "if (count of targetCals) is 0 then error \"No writable calendars available\"",
+        "set targetCal to item 1 of targetCals",
+        "end if",
+        "try",
+        "set visible of targetCal to true",
+        "end try",
         (
             "set newEvent to make new event at end of events of targetCal "
             f"with properties {{summary:{_osascript_literal(title)}, "
@@ -905,6 +1009,110 @@ def _create_calendar_event_apple_calendar(
         "end tell",
     ]
     return _run_osascript(lines)
+
+
+def _tool_calendar_list(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    if sys.platform != "darwin":
+        return "Apple Calendar listing requires macOS."
+    script_lines = [
+        "set outputLines to {}",
+        'tell application "Calendar"',
+        "repeat with cal in calendars",
+        "set lineText to (name of cal as string) & \"||\" & (writable of cal as string)",
+        "copy lineText to end of outputLines",
+        "end repeat",
+        "end tell",
+        "set text item delimiters to \"\\n\"",
+        "return outputLines as string",
+    ]
+    ok, output = _run_osascript(script_lines)
+    if not ok:
+        return f"Calendar list failed: {output}"
+    output = output.strip()
+    if not output:
+        return "No calendars found."
+    lines = []
+    for line in output.splitlines():
+        parts = line.split("||")
+        name = parts[0].strip() if parts else "Unknown"
+        writable = parts[1].strip() if len(parts) > 1 else "false"
+        lines.append(f"- {name} (writable: {writable})")
+    return "Calendars:\n" + "\n".join(lines)
+
+
+def _tool_calendar_find(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    if sys.platform != "darwin":
+        return "Apple Calendar search requires macOS."
+    title = str(args.get("title") or "").strip()
+    calendar_name = str(args.get("calendar") or "").strip()
+    if not calendar_name:
+        calendar_name = str(db.get_setting("default_calendar") or "").strip()
+    limit = args.get("limit")
+    max_results = int(limit) if isinstance(limit, int) and limit > 0 else 20
+    tz_name = settings.app_timezone or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except Exception:
+        tz = ZoneInfo("UTC")
+        tz_name = "UTC"
+    start_raw = str(args.get("start") or "").strip()
+    end_raw = str(args.get("end") or "").strip()
+    now = datetime.now(tz)
+    start_dt = _parse_datetime(start_raw, tz) if start_raw else now - timedelta(days=1)
+    end_dt = _parse_datetime(end_raw, tz) if end_raw else now + timedelta(days=30)
+    if not start_dt or not end_dt:
+        return "Provide valid start/end dates (ISO 8601)."
+    start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
+    end_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    script_lines = [
+        f"set calendarName to {_osascript_literal(calendar_name)}",
+        f"set titleQuery to {_osascript_literal(title)}",
+        f"set maxResults to {max_results}",
+        f"set startDate to date {_osascript_literal(start_str)}",
+        f"set endDate to date {_osascript_literal(end_str)}",
+        "set outputLines to {}",
+        'tell application "Calendar"',
+        "set targetCals to calendars",
+        "if calendarName is not \"\" then",
+        "set targetCals to calendars whose name is calendarName",
+        "end if",
+        "repeat with cal in targetCals",
+        "set matches to every event of cal whose start date is greater than startDate and start date is less than endDate",
+        "repeat with ev in matches",
+        "set summaryText to summary of ev as string",
+        "set shouldInclude to true",
+        "if titleQuery is not \"\" then",
+        "if summaryText does not contain titleQuery then",
+        "set shouldInclude to false",
+        "end if",
+        "end if",
+        "if shouldInclude then",
+        "set lineText to (id of ev as string) & \"||\" & summaryText & \"||\" & (start date of ev as string) & \"||\" & (end date of ev as string) & \"||\" & (name of cal as string)",
+        "copy lineText to end of outputLines",
+        "if (count of outputLines) >= maxResults then exit repeat",
+        "end if",
+        "end repeat",
+        "if (count of outputLines) >= maxResults then exit repeat",
+        "end repeat",
+        "end tell",
+        "set text item delimiters to \"\\n\"",
+        "return outputLines as string",
+    ]
+    ok, output = _run_osascript(script_lines)
+    if not ok:
+        return f"Calendar search failed: {output}"
+    output = output.strip()
+    if not output:
+        return "No matching events found."
+    lines = []
+    for line in output.splitlines():
+        parts = line.split("||")
+        if len(parts) < 5:
+            continue
+        event_id, summary, start_text, end_text, cal_name = parts[:5]
+        lines.append(f"- id {event_id} | {summary} | {start_text} -> {end_text} | {cal_name}")
+    return "Events:\n" + "\n".join(lines)
 
 
 def _tool_task_schedule(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
@@ -937,7 +1145,7 @@ def _tool_task_schedule(args: dict[str, Any], settings: Settings, conversation_i
         if not message:
             return "Provide a reminder message."
         if not name:
-            name = f"Rappel: {message}"
+            name = f"Reminder: {message}"
         payload = {"message": message}
     enabled = args.get("enabled", True)
     task_id = db.add_scheduled_task(
@@ -1011,17 +1219,35 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
     query = str(args.get("query") or "").strip()
     account = str(args.get("account") or "").strip()
     mailbox = str(args.get("mailbox") or "").strip()
+    if not account:
+        account = str(db.get_setting("default_mail_account") or "").strip()
+    if not mailbox:
+        mailbox = str(db.get_setting("default_mailbox") or "").strip()
     limit = args.get("limit")
     limit_value = int(limit) if isinstance(limit, int) and limit > 0 else 20
     since_days = args.get("since_days")
     use_cutoff = isinstance(since_days, int) and since_days > 0
+    if limit is None and use_cutoff:
+        limit_value = 50
+    search_body = bool(args.get("search_body"))
+    only_inbox_value = args.get("only_inbox")
+    if only_inbox_value is None:
+        only_inbox = bool(use_cutoff and not mailbox)
+    else:
+        only_inbox = bool(only_inbox_value)
 
+    per_mailbox_limit = min(limit_value, 50)
     script_lines = [
         f"set maxResults to {limit_value}",
+        f"set perMailboxLimit to {per_mailbox_limit}",
         f"set searchQuery to {_osascript_literal(query)}",
         f"set accountName to {_osascript_literal(account)}",
         f"set mailboxName to {_osascript_literal(mailbox)}",
         f"set useCutoff to {str(use_cutoff).lower()}",
+        f"set searchBody to {str(search_body).lower()}",
+        f"set onlyInbox to {str(only_inbox).lower()}",
+        "set inboxNames to {\"INBOX\", \"Inbox\", \"Boite de reception\"}",
+        "set epochBase to date \"Thursday, January 1, 1970 00:00:00\"",
     ]
     if use_cutoff:
         script_lines.append(f"set cutoffDate to (current date) - ({since_days} * days)")
@@ -1029,36 +1255,65 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
         [
             "set outputLines to {}",
             'tell application "Mail"',
-            "set targetAccounts to {}",
+            "set targetAccounts to every account",
             "if accountName is not \"\" then",
-            "set targetAccounts to {account accountName}",
-            "else",
+            "set targetAccounts to (every account whose name is accountName)",
+            "if (count of targetAccounts) is 0 then",
             "set targetAccounts to every account",
             "end if",
+            "end if",
             "repeat with acc in targetAccounts",
-            "set targetMailboxes to {}",
+            "set targetMailboxes to mailboxes of acc",
             "if mailboxName is not \"\" then",
-            "set targetMailboxes to {mailbox mailboxName of acc}",
-            "else",
+            "set targetMailboxes to (mailboxes of acc whose name is mailboxName)",
+            "if (count of targetMailboxes) is 0 then",
             "set targetMailboxes to mailboxes of acc",
             "end if",
+            "else if onlyInbox then",
+            "set targetMailboxes to {}",
+            "repeat with mbox in mailboxes of acc",
+            "set inboxMatch to false",
+            "try",
+            "if (special mailbox of mbox) is inbox then set inboxMatch to true",
+            "end try",
+            "if inboxMatch is false then",
+            "set mboxName to name of mbox as string",
+            "if inboxNames contains mboxName then set inboxMatch to true",
+            "end if",
+            "end if",
+            "if inboxMatch then copy mbox to end of targetMailboxes",
+            "end repeat",
+            "if (count of targetMailboxes) is 0 then",
+            "set targetMailboxes to mailboxes of acc",
+            "end if",
+            "end if",
             "repeat with mbox in targetMailboxes",
-            "if (count of outputLines) ≥ maxResults then exit repeat",
+            "set mailboxCount to 0",
             "set theMessages to {}",
             "if useCutoff then",
             "if searchQuery is not \"\" then",
+            "if searchBody then",
             "set theMessages to (every message of mbox whose date received is greater than cutoffDate and (subject contains searchQuery or sender contains searchQuery or content contains searchQuery))",
+            "else",
+            "set theMessages to (every message of mbox whose date received is greater than cutoffDate and (subject contains searchQuery or sender contains searchQuery))",
+            "end if",
             "else",
             "set theMessages to (every message of mbox whose date received is greater than cutoffDate)",
             "end if",
             "else",
             "if searchQuery is not \"\" then",
+            "if searchBody then",
             "set theMessages to (every message of mbox whose subject contains searchQuery or sender contains searchQuery or content contains searchQuery)",
+            "else",
+            "set theMessages to (every message of mbox whose subject contains searchQuery or sender contains searchQuery)",
+            "end if",
             "else",
             "set theMessages to (messages of mbox)",
             "end if",
             "end if",
             "repeat with msg in theMessages",
+            "set mailboxCount to mailboxCount + 1",
+            "if mailboxCount > perMailboxLimit then exit repeat",
             "set mailId to id of msg as string",
             "set msgId to \"\"",
             "try",
@@ -1069,9 +1324,9 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
             "set dateText to date received of msg as string",
             "set mailboxText to name of mbox as string",
             "set accountText to name of acc as string",
-            "set lineText to mailId & \"||\" & msgId & \"||\" & subjectText & \"||\" & senderText & \"||\" & dateText & \"||\" & mailboxText & \"||\" & accountText",
+            "set epochSeconds to (date received of msg) - epochBase",
+            "set lineText to (epochSeconds as string) & \"||\" & mailId & \"||\" & msgId & \"||\" & subjectText & \"||\" & senderText & \"||\" & dateText & \"||\" & mailboxText & \"||\" & accountText",
             "copy lineText to end of outputLines",
-            "if (count of outputLines) ≥ maxResults then exit repeat",
             "end repeat",
             "end repeat",
             "end repeat",
@@ -1087,15 +1342,37 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
     if not output:
         return "No matching emails."
     lines = output.splitlines()
-    rendered = []
+    parsed: list[dict[str, Any]] = []
     for line in lines:
         parts = line.split("||")
-        if len(parts) < 7:
+        if len(parts) < 8:
             continue
-        mail_id, message_id, subject, sender, date_text, mailbox_name, account_name = parts[:7]
+        epoch_text, mail_id, message_id, subject, sender, date_text, mailbox_name, account_name = parts[:8]
+        try:
+            epoch_value = float(epoch_text)
+        except ValueError:
+            epoch_value = 0.0
+        parsed.append(
+            {
+                "epoch": epoch_value,
+                "mail_id": mail_id,
+                "message_id": message_id,
+                "subject": subject,
+                "sender": sender,
+                "date_text": date_text,
+                "mailbox": mailbox_name,
+                "account": account_name,
+            }
+        )
+    if not parsed:
+        return "No matching emails."
+    parsed.sort(key=lambda item: item["epoch"], reverse=True)
+    rendered = []
+    for item in parsed[:limit_value]:
         rendered.append(
-            f"- id {mail_id} | msgid {message_id or '-'} | {subject} "
-            f"| {sender} | {date_text} | {account_name}/{mailbox_name}"
+            f"- id {item['mail_id']} | msgid {item['message_id'] or '-'} | "
+            f"{item['subject']} | {item['sender']} | {item['date_text']} | "
+            f"{item['account']}/{item['mailbox']}"
         )
     return "Mail results:\n" + "\n".join(rendered) if rendered else "No matching emails."
 
@@ -1107,6 +1384,10 @@ def _tool_mail_read(args: dict[str, Any], settings: Settings, conversation_id: i
     message_id = str(args.get("message_id") or "").strip()
     account = str(args.get("account") or "").strip()
     mailbox = str(args.get("mailbox") or "").strip()
+    if not account:
+        account = str(db.get_setting("default_mail_account") or "").strip()
+    if not mailbox:
+        mailbox = str(db.get_setting("default_mailbox") or "").strip()
     max_chars = args.get("max_chars")
     max_chars_value = int(max_chars) if isinstance(max_chars, int) and max_chars > 0 else 4000
     if not isinstance(mail_id, int) and not message_id:
@@ -1119,18 +1400,20 @@ def _tool_mail_read(args: dict[str, Any], settings: Settings, conversation_id: i
         f"set mailboxName to {_osascript_literal(mailbox)}",
         "set foundMessage to missing value",
         'tell application "Mail"',
-        "set targetAccounts to {}",
+        "set targetAccounts to every account",
         "if accountName is not \"\" then",
-        "set targetAccounts to {account accountName}",
-        "else",
+        "set targetAccounts to (every account whose name is accountName)",
+        "if (count of targetAccounts) is 0 then",
         "set targetAccounts to every account",
         "end if",
+        "end if",
         "repeat with acc in targetAccounts",
-        "set targetMailboxes to {}",
-        "if mailboxName is not \"\" then",
-        "set targetMailboxes to {mailbox mailboxName of acc}",
-        "else",
         "set targetMailboxes to mailboxes of acc",
+        "if mailboxName is not \"\" then",
+        "set targetMailboxes to (mailboxes of acc whose name is mailboxName)",
+        "if (count of targetMailboxes) is 0 then",
+        "set targetMailboxes to mailboxes of acc",
+        "end if",
         "end if",
         "repeat with mbox in targetMailboxes",
         "if foundMessage is not missing value then exit repeat",
@@ -1413,6 +1696,68 @@ def _tool_excel_set_cell(args: dict[str, Any], settings: Settings, conversation_
     file_ops.set_cell(path, sheet_name, cell, value)
     _refresh_document_text(conversation_id, filename, path)
     return f"Cell {cell} updated in {path}"
+
+
+def _tool_excel_read_sheet(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    filename = safe_filename(args.get("filename", "")).strip()
+    if not filename:
+        return "Provide an Excel filename."
+    if not Path(filename).suffix:
+        filename = f"{filename}.xlsx"
+    document_id = args.get("document_id")
+    sheet_name = args.get("sheet_name")
+    max_rows = args.get("max_rows")
+    max_cols = args.get("max_cols")
+    max_rows_value = int(max_rows) if isinstance(max_rows, int) and max_rows > 0 else 25
+    max_cols_value = int(max_cols) if isinstance(max_cols, int) and max_cols > 0 else 16
+
+    doc = None
+    if isinstance(document_id, int):
+        doc = db.get_document_by_id(document_id)
+    if doc is None:
+        doc = db.get_document_by_name(conversation_id, filename)
+    if doc is None:
+        for row in db.list_documents(conversation_id):
+            if str(row["name"]).lower() == filename.lower():
+                doc = db.get_document_by_id(int(row["id"]))
+                break
+    if not doc:
+        return "Excel file not found in this conversation."
+
+    path = Path(doc["path"])
+    if not path.exists():
+        return "Excel file path not found."
+
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise RuntimeError("pandas is required to read Excel files") from exc
+
+    if sheet_name is None or str(sheet_name).strip() == "":
+        try:
+            xls = pd.ExcelFile(path)
+        except Exception as exc:
+            return f"Failed to read workbook: {exc}"
+        sheets = ", ".join(xls.sheet_names) if xls.sheet_names else "-"
+        return f"Available sheets in {filename}: {sheets}"
+
+    try:
+        df = pd.read_excel(path, sheet_name=sheet_name)
+    except ValueError as exc:
+        return f"Sheet not found: {exc}"
+    except Exception as exc:
+        return f"Failed to read sheet: {exc}"
+
+    if df.empty:
+        return f"Sheet {sheet_name} is empty."
+
+    preview = df.iloc[:max_rows_value, :max_cols_value]
+    csv_preview = preview.to_csv(index=False)
+    return (
+        f"Sheet '{sheet_name}' from {filename} "
+        f"(showing {len(preview)} rows, {len(preview.columns)} cols):\n"
+        f"```csv\n{csv_preview.strip()}\n```"
+    )
 
 
 def _tool_word_create(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:

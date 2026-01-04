@@ -17,6 +17,13 @@ _SCHEDULER = BackgroundScheduler()
 _STARTED = False
 
 
+def _setting_enabled(key: str, default: bool = True) -> bool:
+    value = db.get_setting(key)
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def start(settings: Settings) -> None:
     global _STARTED
     if _STARTED:
@@ -115,9 +122,11 @@ def _run_task(task_id: int, settings: Settings) -> None:
 
 
 def _run_web_digest(task: dict, settings: Settings) -> str:
+    if not _setting_enabled("tools_web_enabled", True):
+        return "Web tools disabled."
     task = _normalize_task(task)
     payload = _parse_payload(task.get("payload"))
-    query = payload.get("query") or task.get("name") or "Actualites"
+    query = payload.get("query") or task.get("name") or "News"
     limit = int(payload.get("limit") or 5)
     results = web_search.search(query, settings, limit)
     sources = web_search.summarize_results(results)
@@ -127,8 +136,8 @@ def _run_web_digest(task: dict, settings: Settings) -> str:
         llm = LLMClient(settings)
         if llm.available():
             prompt = (
-                "Resume en francais, 3-5 points cles max. "
-                "Reste factuel et cite les sources a la fin.\n\n"
+                "Summarize in English, 3-5 key points max. "
+                "Stay factual and cite sources at the end.\n\n"
                 f"Sources:\n{sources}"
             )
             response = llm.chat(
@@ -141,8 +150,8 @@ def _run_web_digest(task: dict, settings: Settings) -> str:
             )
             summary = str(response.get("content") or "").strip()
 
-    title = task.get("name") or "Tache planifiee"
-    header = f"Resultat de tache planifiee: {title}"
+    title = task.get("name") or "Scheduled task"
+    header = f"Scheduled task result: {title}"
     if summary:
         content = f"{header}\n\n{summary}\n\n{sources}"
     else:
@@ -154,8 +163,8 @@ def _run_web_digest(task: dict, settings: Settings) -> str:
 def _run_reminder(task: dict, settings: Settings) -> str:
     task = _normalize_task(task)
     payload = _parse_payload(task.get("payload"))
-    message = payload.get("message") or task.get("name") or "Rappel"
-    content = f"Rappel programme: {message}"
+    message = payload.get("message") or task.get("name") or "Reminder"
+    content = f"Scheduled reminder: {message}"
     db.add_message(int(task["conversation_id"]), "assistant", content)
     return "ok"
 

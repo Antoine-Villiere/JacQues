@@ -31,6 +31,7 @@ from jacques import db
 from jacques.config import (
     BASE_DIR,
     DATA_DIR,
+    EXPORTS_DIR,
     IMAGES_DIR,
     UPLOADS_DIR,
     Settings,
@@ -49,6 +50,8 @@ STREAMING_STATUS: dict[int, bool] = {}
 STREAMING_LOCK = threading.Lock()
 TOOL_STATUS: dict[int, dict[str, str]] = {}
 TOOL_LOCK = threading.Lock()
+CANCEL_STATUS: dict[int, bool] = {}
+CANCEL_LOCK = threading.Lock()
 MAILTO_SEEN: dict[int, int] = {}
 MAILTO_LOCK = threading.Lock()
 MAILTO_RECENT_SECONDS = 300
@@ -59,15 +62,44 @@ SCHEDULER_STARTED = False
 SCHEDULER_LOCK = threading.Lock()
 INITIAL_SYSTEM_PROMPT = db.get_setting("system_prompt") or assistant.SYSTEM_PROMPT
 INITIAL_GLOBAL_MEMORY = db.get_setting("global_memory") or ""
+INITIAL_CUSTOM_INSTRUCTIONS = db.get_setting("custom_instructions") or ""
+INITIAL_USER_NICKNAME = db.get_setting("user_nickname") or ""
+INITIAL_USER_OCCUPATION = db.get_setting("user_occupation") or ""
+INITIAL_USER_ABOUT = db.get_setting("user_about") or ""
+INITIAL_DEFAULT_CALENDAR = db.get_setting("default_calendar") or ""
+INITIAL_MAIL_ACCOUNT = db.get_setting("default_mail_account") or ""
+INITIAL_MAILBOX = db.get_setting("default_mailbox") or ""
 INITIAL_ONLYOFFICE_URL = db.get_setting("onlyoffice_url") or settings.onlyoffice_url or ""
 INITIAL_ONLYOFFICE_JWT = db.get_setting("onlyoffice_jwt") or settings.onlyoffice_jwt or ""
 INITIAL_APP_BASE_URL = db.get_setting("app_base_url") or settings.app_base_url or ""
+INITIAL_APP_TIMEZONE = db.get_setting("app_timezone") or settings.app_timezone or "UTC"
+INITIAL_LLM_STREAMING = db.get_setting("llm_streaming")
+
+
+def _setting_bool(value: str | None, default: bool) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _setting_enabled(key: str, default: bool = True) -> bool:
+    return _setting_bool(db.get_setting(key), default)
+
+
+TOOLS_WEB_ENABLED = _setting_bool(db.get_setting("tools_web_enabled"), True)
+TOOLS_MAIL_ENABLED = _setting_bool(db.get_setting("tools_mail_enabled"), True)
+TOOLS_CALENDAR_ENABLED = _setting_bool(db.get_setting("tools_calendar_enabled"), True)
+TOOLS_CODE_ENABLED = _setting_bool(db.get_setting("tools_code_enabled"), True)
+LLM_STREAMING_ENABLED = _setting_bool(INITIAL_LLM_STREAMING, settings.llm_streaming)
 if INITIAL_ONLYOFFICE_URL:
     settings.onlyoffice_url = INITIAL_ONLYOFFICE_URL
 if INITIAL_ONLYOFFICE_JWT:
     settings.onlyoffice_jwt = INITIAL_ONLYOFFICE_JWT
 if INITIAL_APP_BASE_URL:
     settings.app_base_url = INITIAL_APP_BASE_URL
+if INITIAL_APP_TIMEZONE:
+    settings.app_timezone = INITIAL_APP_TIMEZONE
+settings.llm_streaming = LLM_STREAMING_ENABLED
 
 
 def _set_streaming(conversation_id: int, value: bool) -> None:
@@ -78,6 +110,16 @@ def _set_streaming(conversation_id: int, value: bool) -> None:
 def _is_streaming(conversation_id: int) -> bool:
     with STREAMING_LOCK:
         return STREAMING_STATUS.get(conversation_id, False)
+
+
+def _set_cancelled(conversation_id: int, value: bool) -> None:
+    with CANCEL_LOCK:
+        CANCEL_STATUS[conversation_id] = value
+
+
+def _is_cancelled(conversation_id: int) -> bool:
+    with CANCEL_LOCK:
+        return CANCEL_STATUS.get(conversation_id, False)
 
 
 def _set_tool_status(conversation_id: int, name: str | None, stage: str) -> None:
@@ -234,6 +276,46 @@ def _conversation_options() -> list[dict[str, str]]:
     ]
 
 
+def _purge_conversation(conversation_id: int) -> None:
+    if _is_streaming(conversation_id):
+        _set_streaming(conversation_id, False)
+    _set_tool_status(conversation_id, None, "idle")
+    docs = db.list_documents(conversation_id)
+    images = db.list_images(conversation_id)
+    tasks = db.list_scheduled_tasks(conversation_id)
+    db.delete_conversation(conversation_id)
+    rag.delete_index(conversation_id)
+    for task in tasks:
+        task_scheduler.remove_task(int(task["id"]))
+    for doc in docs:
+        _maybe_delete_file(doc["path"], "documents")
+    for img in images:
+        _maybe_delete_file(img["path"], "images")
+
+
+def _export_all_data() -> Path:
+    export_payload: dict[str, object] = {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
+    with db.get_connection() as conn:
+        for table in [
+            "conversations",
+            "messages",
+            "documents",
+            "images",
+            "pdf_highlights",
+            "scheduled_tasks",
+            "app_settings",
+        ]:
+            cursor = conn.execute(f"SELECT * FROM {table}")
+            export_payload[table] = [dict(row) for row in cursor.fetchall()]
+    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"jacques_export_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.json"
+    path = EXPORTS_DIR / filename
+    path.write_text(json.dumps(export_payload, ensure_ascii=True, indent=2))
+    return path
+
+
 def _message_class(role: str) -> str:
     if role in {"user", "assistant", "tool"}:
         return f"message message-{role}"
@@ -388,6 +470,7 @@ def _stream_response(
             use_web=use_web,
             on_token=on_token,
             on_tool_event=on_tool_event,
+            should_cancel=lambda: _is_cancelled(conversation_id),
         )
     except Exception as exc:
         reply = f"LLM error: {exc}"
@@ -400,6 +483,7 @@ def _stream_response(
             conversation_id, settings, force_first=True
         )
         _set_streaming(conversation_id, False)
+        _set_cancelled(conversation_id, False)
 
 
 def _latest_tool_name(conversation_id: int) -> str | None:
@@ -626,10 +710,10 @@ def _coerce_cell_value(value):
 
 default_convo_id = _ensure_default_conversation()
 
-app = dash.Dash(__name__, suppress_callback_exceptions=True)
+app = dash.Dash(__name__, suppress_callback_exceptions=True, update_title="")
 app.title = "Jacques Assistant"
 
-ALLOWED_FILE_DIRS = {"generated", "images", "uploads"}
+ALLOWED_FILE_DIRS = {"generated", "images", "uploads", "exports"}
 
 
 @app.server.before_request
@@ -681,7 +765,7 @@ def handle_pdf_highlight():
 
     if count == 0:
         return jsonify(
-            {"success": False, "message": "No matching text found."}
+            {"success": False, "message": "No matches found to highlight."}
         ), 200
 
     db.add_pdf_highlight(doc_id, page_value, text)
@@ -875,6 +959,7 @@ app.layout = html.Div(
         dcc.Store(id="mailto-state", data={}),
         dcc.Store(id="calendar-data", data={}),
         dcc.Store(id="calendar-state", data={}),
+        dcc.Store(id="archived-refresh", data=0),
         dcc.Store(id="tasks-refresh", data=0),
         dcc.Store(id="docs-list", data=[]),
         dcc.Interval(id="stream-interval", interval=120, n_intervals=0),
@@ -1018,10 +1103,20 @@ app.layout = html.Div(
                                                             ),
                                                         ],
                                                     ),
-                                                    html.Button(
-                                                        "Send",
-                                                        id="send-btn",
-                                                        className="send-btn",
+                                                    html.Div(
+                                                        className="chat-actions",
+                                                        children=[
+                                                            html.Button(
+                                                                "Send",
+                                                                id="send-btn",
+                                                                className="send-btn",
+                                                            ),
+                                                            html.Button(
+                                                                "Stop",
+                                                                id="stop-btn",
+                                                                className="stop-btn",
+                                                            ),
+                                                        ],
                                                     ),
                                                     html.Div(
                                                         "Drag & drop files here",
@@ -1089,7 +1184,7 @@ app.layout = html.Div(
                             className="modal-header",
                             children=[
                                 html.Div(
-                                    "SYSTEM PROMPT | GLOBAL MEMORY | TASKS",
+                                    "Settings",
                                     className="modal-title",
                                 ),
                                 html.Button(
@@ -1102,128 +1197,460 @@ app.layout = html.Div(
                         html.Div(
                             className="modal-body",
                             children=[
-                                html.Div("System prompt", className="field-label"),
-                                dcc.Textarea(
-                                    id="system-prompt-input",
-                                    value=INITIAL_SYSTEM_PROMPT,
-                                    className="settings-textarea settings-textarea--prompt",
-                                    rows=6,
-                                ),
-                                html.Button(
-                                    "Save prompt",
-                                    id="save-prompt-btn",
-                                    className="settings-btn secondary",
-                                ),
-                                html.Div(id="prompt-status", className="status"),
-                                html.Div("Global memory", className="field-label"),
-                                dcc.Textarea(
-                                    id="global-memory-input",
-                                    value=INITIAL_GLOBAL_MEMORY,
-                                    className="settings-textarea settings-textarea--memory",
-                                    rows=5,
-                                ),
-                                html.Button(
-                                    "Save memory",
-                                    id="save-memory-btn",
-                                    className="settings-btn",
-                                ),
-                                html.Div(id="memory-status", className="status"),
-                                html.Div(
-                                    "Saved memory (future chats)", className="field-label"
-                                ),
-                                html.Div(id="memory-preview", className="memory-preview"),
-                                html.Div("OnlyOffice", className="field-label"),
-                                dcc.Input(
-                                    id="onlyoffice-url-input",
-                                    value=INITIAL_ONLYOFFICE_URL,
-                                    type="text",
-                                    placeholder="OnlyOffice URL (http://localhost:8080)",
-                                    className="settings-input",
-                                ),
-                                dcc.Input(
-                                    id="onlyoffice-jwt-input",
-                                    value=INITIAL_ONLYOFFICE_JWT,
-                                    type="text",
-                                    placeholder="OnlyOffice JWT secret",
-                                    className="settings-input",
-                                ),
-                                dcc.Input(
-                                    id="app-base-url-input",
-                                    value=INITIAL_APP_BASE_URL,
-                                    type="text",
-                                    placeholder="Jacques base URL (callback)",
-                                    className="settings-input",
-                                ),
-                                html.Button(
-                                    "Save OnlyOffice settings",
-                                    id="save-onlyoffice-btn",
-                                    className="settings-btn secondary",
-                                ),
-                                html.Button(
-                                    "Start OnlyOffice (Docker)",
-                                    id="start-onlyoffice-btn",
-                                    className="settings-btn",
-                                ),
-                                html.Button(
-                                    "Start Docker Desktop",
-                                    id="start-docker-btn",
-                                    className="settings-btn secondary",
-                                ),
-                                html.Div(id="onlyoffice-status", className="status"),
-                                html.Div("Scheduled tasks", className="field-label"),
-                                dcc.Dropdown(
-                                    id="task-type-input",
-                                    options=[
-                                        {"label": "Reminder", "value": "reminder"},
-                                        {"label": "Web digest", "value": "web_digest"},
+                                dcc.Tabs(
+                                    id="settings-tabs",
+                                    value="personalization",
+                                    className="settings-tabs",
+                                    parent_className="settings-tabs-root",
+                                    content_className="settings-tabs-content",
+                                    vertical=True,
+                                    children=[
+                                        dcc.Tab(
+                                            label="Personalization",
+                                            value="personalization",
+                                            className="settings-tab",
+                                            selected_className="settings-tab--selected",
+                                            children=[
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Your profile",
+                                                            className="section-title",
+                                                        ),
+                                                        html.Div(
+                                                            className="settings-grid",
+                                                            children=[
+                                                                dcc.Input(
+                                                                    id="user-nickname-input",
+                                                                    value=INITIAL_USER_NICKNAME,
+                                                                    type="text",
+                                                                    placeholder="Nickname",
+                                                                    className="settings-input",
+                                                                ),
+                                                                dcc.Input(
+                                                                    id="user-occupation-input",
+                                                                    value=INITIAL_USER_OCCUPATION,
+                                                                    type="text",
+                                                                    placeholder="Occupation",
+                                                                    className="settings-input",
+                                                                ),
+                                                            ],
+                                                        ),
+                                                        dcc.Textarea(
+                                                            id="user-about-input",
+                                                            value=INITIAL_USER_ABOUT,
+                                                            placeholder="More about you",
+                                                            className="settings-textarea",
+                                                            rows=3,
+                                                        ),
+                                                        html.Div(
+                                                            "Custom instructions",
+                                                            className="field-label",
+                                                        ),
+                                                        dcc.Textarea(
+                                                            id="custom-instructions-input",
+                                                            value=INITIAL_CUSTOM_INSTRUCTIONS,
+                                                            placeholder="How should Jacques respond?",
+                                                            className="settings-textarea settings-textarea--prompt",
+                                                            rows=4,
+                                                        ),
+                                                        html.Button(
+                                                            "Save personalization",
+                                                            id="save-personalization-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Div(
+                                                            id="personalization-status",
+                                                            className="status",
+                                                        ),
+                                                    ],
+                                                ),
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Advanced tool access",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Checklist(
+                                                            id="tool-toggles-input",
+                                                            options=[
+                                                                {
+                                                                    "label": "Web search & news",
+                                                                    "value": "web",
+                                                                },
+                                                                {
+                                                                    "label": "Mail tools",
+                                                                    "value": "mail",
+                                                                },
+                                                                {
+                                                                    "label": "Calendar tools",
+                                                                    "value": "calendar",
+                                                                },
+                                                                {
+                                                                    "label": "Code tools",
+                                                                    "value": "code",
+                                                                },
+                                                            ],
+                                                            value=[
+                                                                option
+                                                                for option, enabled in [
+                                                                    ("web", TOOLS_WEB_ENABLED),
+                                                                    ("mail", TOOLS_MAIL_ENABLED),
+                                                                    ("calendar", TOOLS_CALENDAR_ENABLED),
+                                                                    ("code", TOOLS_CODE_ENABLED),
+                                                                ]
+                                                                if enabled
+                                                            ],
+                                                            className="settings-toggle-list",
+                                                        ),
+                                                        html.Button(
+                                                            "Save tool settings",
+                                                            id="save-tool-toggles-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Div(
+                                                            id="tool-settings-status",
+                                                            className="status",
+                                                        ),
+                                                    ],
+                                                ),
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "System prompt",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Textarea(
+                                                            id="system-prompt-input",
+                                                            value=INITIAL_SYSTEM_PROMPT,
+                                                            className="settings-textarea settings-textarea--prompt",
+                                                            rows=6,
+                                                        ),
+                                                        html.Button(
+                                                            "Save prompt",
+                                                            id="save-prompt-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Div(
+                                                            id="prompt-status",
+                                                            className="status",
+                                                        ),
+                                                        html.Div(
+                                                            "Global memory",
+                                                            className="field-label",
+                                                        ),
+                                                        dcc.Textarea(
+                                                            id="global-memory-input",
+                                                            value=INITIAL_GLOBAL_MEMORY,
+                                                            className="settings-textarea settings-textarea--memory",
+                                                            rows=5,
+                                                        ),
+                                                        html.Button(
+                                                            "Save memory",
+                                                            id="save-memory-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Div(
+                                                            id="memory-status",
+                                                            className="status",
+                                                        ),
+                                                        html.Div(
+                                                            "Saved memory (future chats)",
+                                                            className="field-label",
+                                                        ),
+                                                        html.Div(
+                                                            id="memory-preview",
+                                                            className="memory-preview",
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="App settings",
+                                            value="app-settings",
+                                            className="settings-tab",
+                                            selected_className="settings-tab--selected",
+                                            children=[
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Runtime",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Checklist(
+                                                            id="streaming-toggle-input",
+                                                            options=[
+                                                                {
+                                                                    "label": "LLM streaming",
+                                                                    "value": "stream",
+                                                                }
+                                                            ],
+                                                            value=(
+                                                                ["stream"]
+                                                                if LLM_STREAMING_ENABLED
+                                                                else []
+                                                            ),
+                                                            className="settings-toggle-list",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="app-timezone-input",
+                                                            value=INITIAL_APP_TIMEZONE,
+                                                            type="text",
+                                                            placeholder="Timezone (ex: Europe/Zurich)",
+                                                            className="settings-input",
+                                                        ),
+                                                        html.Button(
+                                                            "Save app settings",
+                                                            id="save-app-settings-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Div(
+                                                            id="app-settings-status",
+                                                            className="status",
+                                                        ),
+                                                    ],
+                                                ),
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Mail & calendar defaults",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="default-mail-account-input",
+                                                            value=INITIAL_MAIL_ACCOUNT,
+                                                            type="text",
+                                                            placeholder="Default mail account (optional)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="default-mailbox-input",
+                                                            value=INITIAL_MAILBOX,
+                                                            type="text",
+                                                            placeholder="Default mailbox (ex: Inbox)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="default-calendar-input",
+                                                            value=INITIAL_DEFAULT_CALENDAR,
+                                                            type="text",
+                                                            placeholder="Default calendar name (optional)",
+                                                            className="settings-input",
+                                                        ),
+                                                    ],
+                                                ),
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "OnlyOffice",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="onlyoffice-url-input",
+                                                            value=INITIAL_ONLYOFFICE_URL,
+                                                            type="text",
+                                                            placeholder="OnlyOffice URL (http://localhost:8080)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="onlyoffice-jwt-input",
+                                                            value=INITIAL_ONLYOFFICE_JWT,
+                                                            type="text",
+                                                            placeholder="OnlyOffice JWT secret",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="app-base-url-input",
+                                                            value=INITIAL_APP_BASE_URL,
+                                                            type="text",
+                                                            placeholder="Jacques base URL (callback)",
+                                                            className="settings-input",
+                                                        ),
+                                                        html.Button(
+                                                            "Save OnlyOffice settings",
+                                                            id="save-onlyoffice-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Button(
+                                                            "Start OnlyOffice (Docker)",
+                                                            id="start-onlyoffice-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Button(
+                                                            "Start Docker Desktop",
+                                                            id="start-docker-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Div(
+                                                            id="onlyoffice-status",
+                                                            className="status",
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="Tasks",
+                                            value="tasks",
+                                            className="settings-tab",
+                                            selected_className="settings-tab--selected",
+                                            children=[
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Scheduled tasks",
+                                                            className="section-title",
+                                                        ),
+                                                        dcc.Dropdown(
+                                                            id="task-type-input",
+                                                            options=[
+                                                                {
+                                                                    "label": "Reminder",
+                                                                    "value": "reminder",
+                                                                },
+                                                                {
+                                                                    "label": "Web digest",
+                                                                    "value": "web_digest",
+                                                                },
+                                                            ],
+                                                            value="reminder",
+                                                            clearable=False,
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="task-name-input",
+                                                            type="text",
+                                                            placeholder="Task name (optional)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Textarea(
+                                                            id="task-message-input",
+                                                            placeholder="Reminder message or search query",
+                                                            className="settings-textarea",
+                                                            rows=3,
+                                                        ),
+                                                        dcc.Input(
+                                                            id="task-cron-input",
+                                                            type="text",
+                                                            placeholder="Cron: min hour day month dow (ex: 0 8 * * *)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="task-timezone-input",
+                                                            type="text",
+                                                            placeholder=f"Timezone (default {settings.app_timezone})",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Input(
+                                                            id="task-limit-input",
+                                                            type="number",
+                                                            placeholder="Web digest count (optional)",
+                                                            className="settings-input",
+                                                        ),
+                                                        dcc.Checklist(
+                                                            id="task-use-llm-input",
+                                                            options=[
+                                                                {
+                                                                    "label": "AI summary",
+                                                                    "value": "use",
+                                                                }
+                                                            ],
+                                                            value=["use"],
+                                                            className="theme-toggle",
+                                                        ),
+                                                        html.Button(
+                                                            "Add task",
+                                                            id="task-create-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Div(
+                                                            id="task-status",
+                                                            className="status",
+                                                        ),
+                                                        html.Div(
+                                                            id="tasks-list",
+                                                            className="tasks-list",
+                                                        ),
+                                                    ],
+                                                )
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="Data controls",
+                                            value="data-controls",
+                                            className="settings-tab",
+                                            selected_className="settings-tab--selected",
+                                            children=[
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Archive & export",
+                                                            className="section-title",
+                                                        ),
+                                                        html.Button(
+                                                            "Archive current chat",
+                                                            id="archive-current-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Button(
+                                                            "Archive all chats",
+                                                            id="archive-all-btn",
+                                                            className="settings-btn secondary",
+                                                        ),
+                                                        html.Button(
+                                                            "Delete all chats",
+                                                            id="delete-all-btn",
+                                                            className="settings-btn danger",
+                                                        ),
+                                                        html.Button(
+                                                            "Export data",
+                                                            id="export-data-btn",
+                                                            className="settings-btn",
+                                                        ),
+                                                        html.Div(
+                                                            id="data-status",
+                                                            className="status",
+                                                        ),
+                                                        html.Div(
+                                                            id="export-link",
+                                                            className="status",
+                                                        ),
+                                                    ],
+                                                )
+                                            ],
+                                        ),
+                                        dcc.Tab(
+                                            label="Archived chats",
+                                            value="archived-chats",
+                                            className="settings-tab",
+                                            selected_className="settings-tab--selected",
+                                            children=[
+                                                html.Div(
+                                                    className="settings-section",
+                                                    children=[
+                                                        html.Div(
+                                                            "Archived conversations",
+                                                            className="section-title",
+                                                        ),
+                                                        html.Div(
+                                                            id="archived-list",
+                                                            className="archived-list",
+                                                        ),
+                                                    ],
+                                                )
+                                            ],
+                                        ),
                                     ],
-                                    value="reminder",
-                                    clearable=False,
-                                    className="settings-input",
                                 ),
-                                dcc.Input(
-                                    id="task-name-input",
-                                    type="text",
-                                    placeholder="Task name (optional)",
-                                    className="settings-input",
-                                ),
-                                dcc.Textarea(
-                                    id="task-message-input",
-                                    placeholder="Reminder message or search query",
-                                    className="settings-textarea",
-                                    rows=3,
-                                ),
-                                dcc.Input(
-                                    id="task-cron-input",
-                                    type="text",
-                                    placeholder="Cron: min hour day month dow (ex: 0 8 * * *)",
-                                    className="settings-input",
-                                ),
-                                dcc.Input(
-                                    id="task-timezone-input",
-                                    type="text",
-                                    placeholder=f"Timezone (default {settings.app_timezone})",
-                                    className="settings-input",
-                                ),
-                                dcc.Input(
-                                    id="task-limit-input",
-                                    type="number",
-                                    placeholder="Web digest count (optional)",
-                                    className="settings-input",
-                                ),
-                                dcc.Checklist(
-                                    id="task-use-llm-input",
-                                    options=[{"label": "AI summary", "value": "use"}],
-                                    value=["use"],
-                                    className="theme-toggle",
-                                ),
-                                html.Button(
-                                    "Add task",
-                                    id="task-create-btn",
-                                    className="settings-btn",
-                                ),
-                                html.Div(id="task-status", className="status"),
-                                html.Div(id="tasks-list", className="tasks-list"),
                             ],
                         ),
                     ],
@@ -1343,13 +1770,14 @@ def send_message(
         convo_id = str(db.create_conversation("Conversation 1"))
 
     use_rag = bool(db.list_documents(int(convo_id)))
-    use_web = True
+    use_web = _setting_enabled("tools_web_enabled", True)
 
     conversation_id = int(convo_id)
     if _is_streaming(conversation_id):
         return no_update, "A response is already streaming.", ""
 
     db.add_message(conversation_id, "user", message)
+    _set_cancelled(conversation_id, False)
 
     def on_tool_event(name: str, stage: str) -> None:
         _set_tool_status(conversation_id, name, stage)
@@ -1378,12 +1806,32 @@ def send_message(
         use_rag=use_rag,
         use_web=use_web,
         on_tool_event=on_tool_event,
+        should_cancel=lambda: _is_cancelled(conversation_id),
     )
     db.add_message(conversation_id, "assistant", reply)
     assistant.maybe_update_conversation_title(
         conversation_id, settings, force_first=True
     )
     return refresh_value + 1, "Response generated.", ""
+
+
+@app.callback(
+    Output("action-status", "children", allow_duplicate=True),
+    Input("stop-btn", "n_clicks"),
+    State("convo-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def stop_response(n_clicks: int | None, convo_id: str | None):
+    if not n_clicks:
+        return no_update
+    if not convo_id:
+        return "Select a conversation first."
+    conversation_id = int(convo_id)
+    if not _is_streaming(conversation_id):
+        return "No active response to stop."
+    _set_cancelled(conversation_id, True)
+    _set_tool_status(conversation_id, None, "idle")
+    return "Stopping..."
 
 
 @app.callback(
@@ -1596,31 +2044,14 @@ def render_file_offcanvas(active_file: dict | None):
     if doc_type == ".pdf":
         file_url = _data_url(path_str)
         highlight_url = (
-            f"/assets/pdf_viewer.html?file={file_url}&doc_id={active_file.get('id')}"
+            f"/assets/pdf_viewer.html?file={file_url}&doc_id={active_file.get('id')}&embed=1"
         )
         body = html.Div(
             [
-                html.Div(
-                    [
-                        html.A(
-                            "Mode surlignage",
-                            href=highlight_url,
-                            target="_blank",
-                            rel="noreferrer",
-                            className="icon-btn",
-                        ),
-                        html.Span(
-                            "Si le PDF est vide, ouvrez-le dans un onglet.",
-                            className="status",
-                        ),
-                    ],
-                    className="pdf-actions",
-                ),
-                html.Embed(
-                    src=file_url,
-                    type="application/pdf",
-                    className="pdf-embed",
-                ),
+                html.Iframe(
+                    src=highlight_url,
+                    className="pdf-frame",
+                )
             ],
             className="file-viewer",
         )
@@ -2052,6 +2483,103 @@ def save_global_memory(n_clicks: int, memory_text: str | None):
 
 
 @app.callback(
+    Output("personalization-status", "children"),
+    Output("custom-instructions-input", "value"),
+    Output("user-nickname-input", "value"),
+    Output("user-occupation-input", "value"),
+    Output("user-about-input", "value"),
+    Input("save-personalization-btn", "n_clicks"),
+    State("custom-instructions-input", "value"),
+    State("user-nickname-input", "value"),
+    State("user-occupation-input", "value"),
+    State("user-about-input", "value"),
+    prevent_initial_call=True,
+)
+def save_personalization(
+    n_clicks: int | None,
+    instructions: str | None,
+    nickname: str | None,
+    occupation: str | None,
+    about: str | None,
+):
+    if not n_clicks:
+        return no_update, no_update, no_update, no_update, no_update
+    clean_instructions = (instructions or "").strip()
+    clean_nickname = (nickname or "").strip()
+    clean_occupation = (occupation or "").strip()
+    clean_about = (about or "").strip()
+    db.set_setting("custom_instructions", clean_instructions)
+    db.set_setting("user_nickname", clean_nickname)
+    db.set_setting("user_occupation", clean_occupation)
+    db.set_setting("user_about", clean_about)
+    status = "Personalization saved."
+    if not any([clean_instructions, clean_nickname, clean_occupation, clean_about]):
+        status = "Personalization cleared."
+    return (
+        status,
+        clean_instructions,
+        clean_nickname,
+        clean_occupation,
+        clean_about,
+    )
+
+
+@app.callback(
+    Output("tool-settings-status", "children"),
+    Input("save-tool-toggles-btn", "n_clicks"),
+    State("tool-toggles-input", "value"),
+    prevent_initial_call=True,
+)
+def save_tool_settings(n_clicks: int | None, values: list[str] | None):
+    if not n_clicks:
+        return no_update
+    enabled = set(values or [])
+    db.set_setting("tools_web_enabled", "true" if "web" in enabled else "false")
+    db.set_setting("tools_mail_enabled", "true" if "mail" in enabled else "false")
+    db.set_setting(
+        "tools_calendar_enabled", "true" if "calendar" in enabled else "false"
+    )
+    db.set_setting("tools_code_enabled", "true" if "code" in enabled else "false")
+    return "Tool access updated."
+
+
+@app.callback(
+    Output("app-settings-status", "children"),
+    Output("app-timezone-input", "value"),
+    Input("save-app-settings-btn", "n_clicks"),
+    State("app-timezone-input", "value"),
+    State("streaming-toggle-input", "value"),
+    State("default-mail-account-input", "value"),
+    State("default-mailbox-input", "value"),
+    State("default-calendar-input", "value"),
+    prevent_initial_call=True,
+)
+def save_app_settings(
+    n_clicks: int | None,
+    timezone_value: str | None,
+    streaming_values: list[str] | None,
+    default_mail_account: str | None,
+    default_mailbox: str | None,
+    default_calendar: str | None,
+):
+    if not n_clicks:
+        return no_update, no_update
+    timezone = (timezone_value or settings.app_timezone or "UTC").strip()
+    streaming_enabled = bool(streaming_values and "stream" in streaming_values)
+    mail_account = (default_mail_account or "").strip()
+    mail_box = (default_mailbox or "").strip()
+    calendar_name = (default_calendar or "").strip()
+    db.set_setting("app_timezone", timezone)
+    db.set_setting("llm_streaming", "true" if streaming_enabled else "false")
+    db.set_setting("default_mail_account", mail_account)
+    db.set_setting("default_mailbox", mail_box)
+    db.set_setting("default_calendar", calendar_name)
+    settings.app_timezone = timezone
+    settings.llm_streaming = streaming_enabled
+    return "App settings saved.", timezone
+
+
+@app.callback(
     Output("onlyoffice-status", "children"),
     Output("onlyoffice-url-input", "value"),
     Output("onlyoffice-jwt-input", "value"),
@@ -2168,7 +2696,7 @@ def create_task(
         if not text:
             return no_update, "Provide a reminder message."
         if not clean_name:
-            clean_name = f"Rappel: {text}"
+            clean_name = f"Reminder: {text}"
         payload = {"message": text}
         task_type = "reminder"
 
@@ -2318,18 +2846,7 @@ def delete_conversation(delete_clicks: list[int], convo_id: str | None):
         return no_update, no_update, no_update
     if _is_streaming(conversation_id):
         return no_update, no_update, "Wait for the streaming response to finish."
-    _set_tool_status(conversation_id, None, "idle")
-
-    docs = db.list_documents(conversation_id)
-    images = db.list_images(conversation_id)
-    db.delete_conversation(conversation_id)
-    rag.delete_index(conversation_id)
-    _set_streaming(conversation_id, False)
-
-    for doc in docs:
-        _maybe_delete_file(doc["path"], "documents")
-    for img in images:
-        _maybe_delete_file(img["path"], "images")
+    _purge_conversation(conversation_id)
 
     conversations = db.list_conversations()
     if not conversations:
@@ -2340,6 +2857,202 @@ def delete_conversation(delete_clicks: list[int], convo_id: str | None):
         next_value = str(conversations[0]["id"])
 
     return _conversation_options(), next_value, "Conversation deleted."
+
+
+@app.callback(
+    Output("convo-dropdown", "options", allow_duplicate=True),
+    Output("convo-dropdown", "value", allow_duplicate=True),
+    Output("data-status", "children"),
+    Output("export-link", "children"),
+    Output("archived-refresh", "data", allow_duplicate=True),
+    Input("archive-current-btn", "n_clicks"),
+    Input("archive-all-btn", "n_clicks"),
+    Input("delete-all-btn", "n_clicks"),
+    Input("export-data-btn", "n_clicks"),
+    State("convo-dropdown", "value"),
+    State("archived-refresh", "data"),
+    prevent_initial_call=True,
+)
+def handle_data_controls(
+    archive_current: int | None,
+    archive_all: int | None,
+    delete_all: int | None,
+    export_clicks: int | None,
+    convo_id: str | None,
+    archived_refresh: int,
+):
+    trigger = dash.callback_context.triggered_id
+    if trigger == "export-data-btn":
+        export_path = _export_all_data()
+        link = html.A(
+            export_path.name,
+            href=_data_url(str(export_path)),
+            target="_blank",
+            className="export-link",
+        )
+        return no_update, no_update, "Export ready.", link, archived_refresh
+
+    if trigger == "archive-current-btn":
+        if not convo_id:
+            return no_update, no_update, "Select a conversation first.", no_update, archived_refresh
+        conversation_id = int(convo_id)
+        if _is_streaming(conversation_id):
+            return no_update, no_update, "Wait for the streaming response to finish.", no_update, archived_refresh
+        db.set_conversation_archived(conversation_id, True)
+        conversations = db.list_conversations()
+        if not conversations:
+            next_id = db.create_conversation("Conversation 1")
+            next_value = str(next_id)
+        else:
+            next_value = str(conversations[0]["id"])
+        return (
+            _conversation_options(),
+            next_value,
+            "Conversation archived.",
+            no_update,
+            (archived_refresh or 0) + 1,
+        )
+
+    if trigger == "archive-all-btn":
+        active_convos = db.list_conversations(include_archived=True)
+        for row in active_convos:
+            if _is_streaming(int(row["id"])):
+                return (
+                    no_update,
+                    no_update,
+                    "Wait for the streaming response to finish.",
+                    no_update,
+                    archived_refresh,
+                )
+        db.archive_all_conversations()
+        next_id = db.create_conversation("Conversation 1")
+        return (
+            _conversation_options(),
+            str(next_id),
+            "All conversations archived.",
+            no_update,
+            (archived_refresh or 0) + 1,
+        )
+
+    if trigger == "delete-all-btn":
+        all_convos = db.list_conversations(include_archived=True)
+        for row in all_convos:
+            conversation_id = int(row["id"])
+            if _is_streaming(conversation_id):
+                return (
+                    no_update,
+                    no_update,
+                    "Wait for the streaming response to finish.",
+                    no_update,
+                    archived_refresh,
+                )
+        for row in all_convos:
+            _purge_conversation(int(row["id"]))
+        next_id = db.create_conversation("Conversation 1")
+        return (
+            _conversation_options(),
+            str(next_id),
+            "All conversations deleted.",
+            no_update,
+            (archived_refresh or 0) + 1,
+        )
+
+    return no_update, no_update, no_update, no_update, archived_refresh
+
+
+@app.callback(
+    Output("archived-list", "children"),
+    Input("archived-refresh", "data"),
+    Input("settings-open", "data"),
+)
+def refresh_archived_list(refresh_value: int, is_open: bool):
+    if not is_open:
+        return no_update
+    archived = db.list_archived_conversations()
+    if not archived:
+        return html.Div("No archived conversations.", className="status")
+    items = []
+    for convo in archived:
+        items.append(
+            html.Div(
+                [
+                    html.Div(
+                        [
+                            html.Div(convo["title"], className="archived-title"),
+                            html.Div(convo["created_at"], className="archived-meta"),
+                        ],
+                        className="archived-info",
+                    ),
+                    html.Div(
+                        [
+                            html.Button(
+                                "Restore",
+                                id={"type": "archived-restore", "index": convo["id"]},
+                                className="icon-btn",
+                            ),
+                            html.Button(
+                                "Delete",
+                                id={"type": "archived-delete", "index": convo["id"]},
+                                className="icon-btn danger",
+                            ),
+                        ],
+                        className="archived-actions",
+                    ),
+                ],
+                className="archived-item",
+            )
+        )
+    return items
+
+
+@app.callback(
+    Output("archived-refresh", "data", allow_duplicate=True),
+    Output("convo-dropdown", "options", allow_duplicate=True),
+    Output("convo-dropdown", "value", allow_duplicate=True),
+    Output("data-status", "children", allow_duplicate=True),
+    Input({"type": "archived-restore", "index": ALL}, "n_clicks"),
+    Input({"type": "archived-delete", "index": ALL}, "n_clicks"),
+    State("archived-refresh", "data"),
+    State("convo-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def update_archived_items(
+    restore_clicks: list[int] | None,
+    delete_clicks: list[int] | None,
+    refresh_value: int,
+    convo_id: str | None,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger or not isinstance(trigger, dict):
+        return no_update, no_update, no_update, no_update
+    convo_id_int = int(trigger.get("index") or 0)
+    if not convo_id_int:
+        return no_update, no_update, no_update, "Conversation not found."
+    if trigger.get("type") == "archived-restore":
+        db.set_conversation_archived(convo_id_int, False)
+        conversations = db.list_conversations()
+        next_value = str(conversations[0]["id"]) if conversations else str(convo_id_int)
+        return (
+            (refresh_value or 0) + 1,
+            _conversation_options(),
+            next_value,
+            "Conversation restored.",
+        )
+    if trigger.get("type") == "archived-delete":
+        if _is_streaming(convo_id_int):
+            return no_update, no_update, no_update, "Wait for the streaming response to finish."
+        _purge_conversation(convo_id_int)
+        conversations = db.list_conversations()
+        next_value = str(conversations[0]["id"]) if conversations else None
+        if not next_value:
+            next_value = str(db.create_conversation("Conversation 1"))
+        return (
+            (refresh_value or 0) + 1,
+            _conversation_options(),
+            next_value,
+            "Archived conversation deleted.",
+        )
+    return no_update, no_update, no_update, no_update
 
 
 @app.callback(

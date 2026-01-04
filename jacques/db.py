@@ -100,11 +100,16 @@ def init_db() -> None:
         auto_title_added = _ensure_column(
             conn, "conversations", "auto_title", "INTEGER"
         )
+        archived_added = _ensure_column(conn, "conversations", "archived", "INTEGER")
         documents_added = _ensure_column(conn, "documents", "conversation_id", "INTEGER")
         images_added = _ensure_column(conn, "images", "conversation_id", "INTEGER")
         if auto_title_added:
             conn.execute(
                 "UPDATE conversations SET auto_title = 1 WHERE auto_title IS NULL"
+            )
+        if archived_added:
+            conn.execute(
+                "UPDATE conversations SET archived = 0 WHERE archived IS NULL"
             )
         if documents_added or images_added:
             convo_id = _latest_conversation_id(conn)
@@ -146,18 +151,34 @@ def _latest_conversation_id(conn: sqlite3.Connection) -> int | None:
 def create_conversation(title: str) -> int:
     with get_connection() as conn:
         cursor = conn.execute(
-            "INSERT INTO conversations (title, created_at, auto_title) VALUES (?, ?, ?)",
-            (title, _now(), 1),
+            "INSERT INTO conversations (title, created_at, auto_title, archived) VALUES (?, ?, ?, ?)",
+            (title, _now(), 1, 0),
         )
         conn.commit()
         return int(cursor.lastrowid)
 
 
-def list_conversations() -> list[sqlite3.Row]:
+def list_conversations(include_archived: bool = False) -> list[sqlite3.Row]:
+    with get_connection() as conn:
+        if include_archived:
+            cursor = conn.execute(
+                "SELECT id, title, created_at, auto_title, archived FROM conversations "
+                "ORDER BY created_at DESC"
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT id, title, created_at, auto_title, archived FROM conversations "
+                "WHERE archived = 0 OR archived IS NULL "
+                "ORDER BY created_at DESC"
+            )
+        return list(cursor.fetchall())
+
+
+def list_archived_conversations() -> list[sqlite3.Row]:
     with get_connection() as conn:
         cursor = conn.execute(
-            "SELECT id, title, created_at, auto_title FROM conversations "
-            "ORDER BY created_at DESC"
+            "SELECT id, title, created_at, auto_title, archived FROM conversations "
+            "WHERE archived = 1 ORDER BY created_at DESC"
         )
         return list(cursor.fetchall())
 
@@ -165,7 +186,7 @@ def list_conversations() -> list[sqlite3.Row]:
 def get_conversation(conversation_id: int) -> sqlite3.Row | None:
     with get_connection() as conn:
         cursor = conn.execute(
-            "SELECT id, title, created_at, auto_title FROM conversations WHERE id = ?",
+            "SELECT id, title, created_at, auto_title, archived FROM conversations WHERE id = ?",
             (conversation_id,),
         )
         return cursor.fetchone()
@@ -188,9 +209,34 @@ def update_conversation_title(
         conn.commit()
 
 
+def set_conversation_archived(conversation_id: int, archived: bool) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE conversations SET archived = ? WHERE id = ?",
+            (1 if archived else 0, conversation_id),
+        )
+        conn.commit()
+
+
+def archive_all_conversations() -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE conversations SET archived = 1")
+        conn.commit()
+
+
+def unarchive_all_conversations() -> None:
+    with get_connection() as conn:
+        conn.execute("UPDATE conversations SET archived = 0")
+        conn.commit()
+
+
 def delete_conversation(conversation_id: int) -> None:
     with get_connection() as conn:
         conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+        conn.execute(
+            "DELETE FROM scheduled_tasks WHERE conversation_id = ?",
+            (conversation_id,),
+        )
         conn.execute(
             """
             DELETE FROM pdf_highlights

@@ -168,7 +168,7 @@
           .promise.then((pdf) => {
             pdfViewer.setDocument(pdf);
             linkService.setDocument(pdf, null);
-            statusEl.textContent = "PDF chargé.";
+            statusEl.textContent = "PDF loaded.";
           })
           .catch((err) => {
             showFallback(url, `Chargement PDF impossible: ${err}`);

@@ -24,9 +24,12 @@ SYSTEM_PROMPT = (
     "If unsure, ask first. Use the memory_append tool when appropriate. "
     "Use email_draft to compose emails and open the user's mail app when asked. "
     "Use mail_search and mail_read to access Apple Mail when asked; never delete or send emails. "
-    "Use calendar_event to create calendar invites and open the user's calendar app. "
+    "For email recaps (e.g., today/yesterday), use mail_search with since_days and only_inbox. "
+    "Use calendar_list and calendar_find to inspect calendars/events, then calendar_event to create events; "
+    "if multiple calendars exist, prefer a writable calendar or ask for the name. "
     "Use task_schedule for reminders or recurring tasks (cron syntax) and do not store reminders in memory. "
     "Use project_list_files, project_read_file, project_search, and project_replace to inspect or update the project; avoid overwriting full files. "
+    "Use excel_read_sheet to read data from specific Excel sheets when referenced. "
     "Use news_search for current news queries. Use web_fetch with a URL (and optional CSS selector) to scrape specific sites. "
     "When editing Word/Excel/PDF files, preserve original formatting; "
     "avoid rewriting entire documents when a targeted edit suffices. "
@@ -44,6 +47,7 @@ def respond(
     use_rag: bool = True,
     use_web: bool = False,
     on_tool_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     command_reply = commands.handle_command(user_message, settings, conversation_id)
     if command_reply is not None:
@@ -102,6 +106,7 @@ def respond(
         conversation_id,
         log_tool_event,
         on_tool_event,
+        should_cancel,
     )
     return reply or "No response generated."
 
@@ -114,6 +119,7 @@ def respond_streaming(
     use_web: bool = False,
     on_token: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     command_reply = commands.handle_command(user_message, settings, conversation_id)
     if command_reply is not None:
@@ -178,6 +184,7 @@ def respond_streaming(
         log_tool_event,
         on_token,
         on_tool_event,
+        should_cancel,
     )
     return reply or "No response generated."
 
@@ -291,7 +298,10 @@ def _run_tool_loop(
     conversation_id: int,
     log_tool_event: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
+    if should_cancel and should_cancel():
+        return "Stopped by user."
     if not tools:
         try:
             response = llm.chat(messages, model=settings.reasoning_model)
@@ -306,6 +316,8 @@ def _run_tool_loop(
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
     while steps < settings.max_tool_calls:
+        if should_cancel and should_cancel():
+            return "Stopped by user."
         try:
             response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
         except Exception as exc:
@@ -340,6 +352,8 @@ def _run_tool_loop(
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         last_tool_calls = tool_calls
         for call in tool_calls:
+            if should_cancel and should_cancel():
+                return "Stopped by user."
             function = call.get("function", {})
             name = function.get("name")
             raw_args = function.get("arguments", "{}")
@@ -400,20 +414,30 @@ def _run_tool_loop_streaming(
     log_tool_event: Callable[[str], None] | None = None,
     on_token: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> str:
     def stream_or_chat(model: str, toolset: list[dict[str, Any]] | None):
         if settings.llm_streaming and on_token:
             iterator, state = llm.stream_chat(messages, model=model, tools=toolset)
             for token in iterator:
+                if should_cancel and should_cancel():
+                    state["cancelled"] = True
+                    break
                 on_token(token)
             content = "".join(state["content_parts"]).strip()
             tool_calls = _ordered_tool_calls(state["tool_calls"])
-            return content, tool_calls
+            return content, tool_calls, bool(state.get("cancelled"))
         response = llm.chat(messages, model=model, tools=toolset)
-        return str(response.get("content") or "").strip(), response.get("tool_calls") or []
+        return (
+            str(response.get("content") or "").strip(),
+            response.get("tool_calls") or [],
+            False,
+        )
 
     if not tools:
-        content, _ = stream_or_chat(settings.reasoning_model, None)
+        content, _, cancelled = stream_or_chat(settings.reasoning_model, None)
+        if cancelled:
+            return f"{content}\n\n(Stopped by user.)".strip() if content else "Stopped by user."
         return content
 
     steps = 0
@@ -423,10 +447,22 @@ def _run_tool_loop_streaming(
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
     while steps < settings.max_tool_calls:
-        content, tool_calls = stream_or_chat(settings.reasoning_model, tools)
+        if should_cancel and should_cancel():
+            return "Stopped by user."
+        content, tool_calls, cancelled = stream_or_chat(settings.reasoning_model, tools)
+        if cancelled:
+            return f"{content}\n\n(Stopped by user.)".strip() if content else "Stopped by user."
         if not tool_calls:
             if used_tools and settings.text_model != settings.reasoning_model:
-                text_content, text_tool_calls = stream_or_chat(settings.text_model, tools)
+                text_content, text_tool_calls, cancelled_text = stream_or_chat(
+                    settings.text_model, tools
+                )
+                if cancelled_text:
+                    return (
+                        f"{text_content}\n\n(Stopped by user.)".strip()
+                        if text_content
+                        else "Stopped by user."
+                    )
                 if not text_tool_calls:
                     return _append_tool_summary(
                         text_content or content, tool_summaries, latest_sources
@@ -446,6 +482,8 @@ def _run_tool_loop_streaming(
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         last_tool_calls = tool_calls
         for call in tool_calls:
+            if should_cancel and should_cancel():
+                return "Stopped by user."
             function = call.get("function", {})
             name = function.get("name")
             raw_args = function.get("arguments", "{}")
@@ -487,7 +525,9 @@ def _run_tool_loop_streaming(
             "content": "Tool budget reached. Provide the best possible final answer now.",
         }
     )
-    final_content, _ = stream_or_chat(settings.text_model, tools)
+    final_content, _, cancelled = stream_or_chat(settings.text_model, tools)
+    if cancelled:
+        return f"{final_content}\n\n(Stopped by user.)".strip() if final_content else "Stopped by user."
     return _append_tool_summary(final_content, tool_summaries, latest_sources)
 
 
@@ -635,8 +675,24 @@ def _image_context(conversation_id: int, limit: int = 5) -> str:
 def _build_system_prompt() -> str:
     stored_prompt = db.get_setting("system_prompt")
     base_prompt = stored_prompt.strip() if stored_prompt and stored_prompt.strip() else SYSTEM_PROMPT
-    memory = db.get_setting("global_memory") or ""
-    memory = memory.strip()
+    custom_instructions = (db.get_setting("custom_instructions") or "").strip()
+    nickname = (db.get_setting("user_nickname") or "").strip()
+    occupation = (db.get_setting("user_occupation") or "").strip()
+    about = (db.get_setting("user_about") or "").strip()
+    memory = (db.get_setting("global_memory") or "").strip()
+
+    blocks = [base_prompt]
+    profile_lines = []
+    if nickname:
+        profile_lines.append(f"- Nickname: {nickname}")
+    if occupation:
+        profile_lines.append(f"- Occupation: {occupation}")
+    if about:
+        profile_lines.append(f"- About: {about}")
+    if profile_lines:
+        blocks.append("User profile:\n" + "\n".join(profile_lines))
+    if custom_instructions:
+        blocks.append("Custom instructions:\n" + custom_instructions)
     if memory:
-        return f"{base_prompt}\n\nGlobal memory:\n{memory}"
-    return base_prompt
+        blocks.append("Global memory:\n" + memory)
+    return "\n\n".join(blocks)
