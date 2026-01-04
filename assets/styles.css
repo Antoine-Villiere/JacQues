@@ -112,30 +112,59 @@ body {
 .convo-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 280px;
+  gap: 10px;
+  max-height: 300px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 6px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.35);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  scrollbar-gutter: stable;
 }
 
 .convo-list label {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.55);
+  padding: 10px 12px 10px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.75);
+  position: relative;
   cursor: pointer;
-  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
+  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease,
+    background 0.2s ease;
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
 }
 
 .convo-list label:hover {
-  border-color: var(--accent);
+  border-color: rgba(28, 110, 111, 0.45);
+  transform: translateY(-1px);
+}
+
+.convo-list label::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 60%;
+  border-radius: 999px;
+  background: rgba(28, 110, 111, 0.2);
+  opacity: 0;
+  transition: opacity 0.2s ease, background 0.2s ease;
+}
+
+.convo-list label:hover::before {
+  opacity: 1;
 }
 
 .convo-list label input {
   margin: 0;
+  opacity: 0;
+  position: absolute;
+  pointer-events: none;
 }
 
 .convo-item {
@@ -148,6 +177,7 @@ body {
 
 .convo-title {
   font-size: 13px;
+  font-weight: 600;
   color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -160,17 +190,40 @@ body {
   font-size: 14px;
   line-height: 1;
   border-radius: 8px;
-  color: #b91c1c;
-  border-color: rgba(185, 28, 28, 0.3);
+  color: var(--ink-soft);
+  border-color: transparent;
+  background: transparent;
+  opacity: 0;
+  transform: scale(0.9);
+  transition: opacity 0.2s ease, transform 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease;
 }
 
 .convo-list label input:checked + .convo-item .convo-title {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .convo-list label:has(input:checked) {
-  background: rgba(28, 110, 111, 0.12);
-  border-color: rgba(28, 110, 111, 0.35);
+  background: rgba(28, 110, 111, 0.14);
+  border-color: rgba(28, 110, 111, 0.4);
+  box-shadow: 0 14px 26px rgba(28, 110, 111, 0.2);
+}
+
+.convo-list label:has(input:checked)::before {
+  opacity: 1;
+  background: rgba(28, 110, 111, 0.9);
+}
+
+.convo-list label:hover .convo-delete,
+.convo-list label:has(input:checked) .convo-delete {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.convo-delete:hover {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.4);
+  background: rgba(185, 28, 28, 0.08);
 }
 
 .field-label {
@@ -181,20 +234,34 @@ body {
 }
 
 .settings-textarea {
-  min-height: 80px;
-  border-radius: 12px;
-  padding: 10px;
+  min-height: 90px;
+  border-radius: 14px;
+  padding: 12px;
   width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  font-size: 13px;
+  line-height: 1.5;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .settings-input {
-  border-radius: 12px;
-  padding: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
   width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.05);
+  font-size: 13px;
+  line-height: 1.4;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
 .settings-btn {
   width: 100%;
+  border-radius: 14px;
+  letter-spacing: 0.4px;
 }
 
 button.danger {
@@ -243,17 +310,23 @@ button.danger {
 
 .modal-card {
   position: relative;
-  width: min(760px, 92vw);
+  width: min(980px, 94vw);
   max-height: 86vh;
   overflow-y: auto;
-  background: var(--panel);
-  border: 1px solid var(--stroke);
-  border-radius: 20px;
-  box-shadow: var(--shadow);
-  padding: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 248, 252, 0.96));
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 28px 60px rgba(15, 23, 42, 0.2);
+  padding: 22px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.app-shell[data-theme="dark"] .modal-card {
+  background: linear-gradient(180deg, rgba(18, 24, 34, 0.98), rgba(12, 17, 25, 0.96));
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
 }
 
 .modal-header {
@@ -261,18 +334,24 @@ button.danger {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.app-shell[data-theme="dark"] .modal-header {
+  border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 
 .modal-title {
   font-family: 'Fraunces', serif;
-  font-size: 18px;
-  letter-spacing: 0.6px;
+  font-size: 20px;
+  letter-spacing: 0.8px;
 }
 
 .modal-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .settings-tabs-root {
@@ -281,8 +360,8 @@ button.danger {
 
 .settings-tabs {
   display: grid !important;
-  grid-template-columns: 220px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 230px minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
@@ -290,24 +369,41 @@ button.danger {
   display: flex;
   flex-direction: column !important;
   gap: 8px;
-  border-right: 1px solid var(--stroke);
-  padding-right: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
 }
 
 .settings-tabs .tab-content {
   min-width: 0;
+  padding-right: 4px;
 }
 
 .settings-tab {
-  padding: 10px 14px;
+  padding: 10px 12px;
   font-size: 13px;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.4px;
   color: var(--ink-soft);
   background: transparent;
   border: 1px solid transparent;
   border-radius: 12px;
   text-align: left;
   width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.settings-tab::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(28, 110, 111, 0.35);
+  transition: transform 0.2s ease, background 0.2s ease;
 }
 
 .settings-tab--selected {
@@ -315,40 +411,55 @@ button.danger {
   font-weight: 600;
   background: rgba(28, 110, 111, 0.12);
   border-color: rgba(28, 110, 111, 0.4);
-  border-left: 3px solid var(--accent);
+  box-shadow: inset 3px 0 0 rgba(28, 110, 111, 0.85);
+}
+
+.settings-tab--selected::before {
+  background: rgba(28, 110, 111, 0.9);
+  transform: scale(1.2);
 }
 
 [data-theme="dark"] .settings-tab--selected {
   background: rgba(76, 203, 208, 0.2);
   border-color: rgba(76, 203, 208, 0.45);
+  box-shadow: inset 3px 0 0 rgba(76, 203, 208, 0.8);
+}
+
+.app-shell[data-theme="dark"] .settings-tabs .tab-container {
+  background: rgba(12, 17, 25, 0.8);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .settings-section {
   border-radius: 16px;
-  border: 1px solid var(--stroke);
-  background: rgba(255, 255, 255, 0.55);
-  padding: 14px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 249, 252, 0.92));
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   margin-top: 12px;
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
 }
 
 [data-theme="dark"] .settings-section {
-  background: rgba(16, 22, 30, 0.8);
+  background: linear-gradient(180deg, rgba(18, 25, 35, 0.95), rgba(12, 18, 26, 0.88));
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.35);
 }
 
 .section-title {
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 1px;
+  letter-spacing: 1.6px;
   color: var(--ink-soft);
+  font-weight: 600;
 }
 
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 
 .settings-toggle-list label {
@@ -358,10 +469,33 @@ button.danger {
   font-size: 13px;
   color: var(--ink);
   margin-bottom: 6px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 .settings-toggle-list input {
   accent-color: rgba(28, 110, 111, 0.8);
+}
+
+.app-shell[data-theme="dark"] .settings-toggle-list label {
+  background: rgba(17, 24, 34, 0.7);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.settings-input:focus,
+.settings-textarea:focus {
+  outline: none;
+  border-color: rgba(28, 110, 111, 0.6);
+  box-shadow: 0 0 0 2px rgba(28, 110, 111, 0.2);
+}
+
+.app-shell[data-theme="dark"] .settings-input,
+.app-shell[data-theme="dark"] .settings-textarea {
+  background: rgba(10, 14, 20, 0.7);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
 }
 
 .archived-list {
@@ -467,6 +601,13 @@ button.danger {
   flex-direction: column;
   gap: 18px;
   min-width: 0;
+  min-height: 0;
+  height: calc(100vh - 48px);
+}
+
+.main--compressed {
+  margin-right: min(640px, 52vw);
+  transition: margin-right 0.3s ease;
 }
 
 .chat-header {
@@ -482,6 +623,8 @@ button.danger {
   align-items: stretch;
   min-width: 0;
   flex: 1;
+  min-height: 0;
+  height: 100%;
 }
 
 .side-panel {
@@ -496,6 +639,7 @@ button.danger {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
+  height: 100%;
 }
 
 .side-tabs {
@@ -535,6 +679,8 @@ button.danger {
   display: flex;
   flex-direction: column;
   gap: 18px;
+  min-height: 0;
+  height: 100%;
 }
 
 .chat-title {
@@ -580,12 +726,17 @@ button.danger {
   border: 1px solid var(--stroke);
   overflow-y: auto;
   overflow-x: hidden;
-  min-height: 380px;
-  max-height: 56vh;
+  min-height: 320px;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 14px;
   min-width: 0;
+}
+
+.input-panel {
+  margin-top: auto;
+  flex-shrink: 0;
 }
 
 .header-actions {
@@ -601,6 +752,7 @@ button.danger {
   border: 1px solid transparent;
   max-width: 100%;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .message-user {
@@ -644,7 +796,98 @@ button.danger {
   text-transform: uppercase;
   letter-spacing: 1px;
   color: var(--ink-soft);
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 6px;
+}
+
+.message-edit-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.message-edit-btn:hover {
+  border-color: var(--stroke);
+  color: var(--ink);
+  background: rgba(28, 110, 111, 0.08);
+}
+
+.message-edit-input {
+  width: 100%;
+  min-height: 120px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  font-family: 'Spline Sans Mono', monospace;
+  resize: vertical;
+}
+
+.app-shell[data-theme="dark"] .message-edit-input {
+  background: rgba(15, 23, 33, 0.8);
+  border-color: rgba(248, 250, 252, 0.2);
+  color: var(--ink);
+}
+
+.message-edit-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.branch-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0 4px;
+  flex-wrap: wrap;
+  align-self: flex-end;
+  max-width: 78%;
+}
+
+.branch-btn {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.6);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.app-shell[data-theme="dark"] .branch-btn {
+  background: rgba(15, 23, 33, 0.7);
+  color: var(--ink-soft);
+  border-color: rgba(248, 250, 252, 0.2);
+}
+
+.branch-btn:hover {
+  color: var(--ink);
+  border-color: var(--accent);
+}
+
+.branch-btn--active {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: rgba(28, 110, 111, 0.18);
+}
+
+.app-shell[data-theme="dark"] .branch-btn--active {
+  background: rgba(76, 203, 208, 0.2);
 }
 
 .message-content pre {
@@ -1223,7 +1466,7 @@ button.danger {
   border-radius: 16px;
   width: 100%;
   height: 70vh;
-  background: #111;
+  background: #f8fafc;
 }
 
 .pdf-embed {
@@ -1567,12 +1810,28 @@ button:focus-visible {
 }
 
 .app-shell[data-theme="dark"] .convo-list label {
-  background: rgba(20, 28, 38, 0.72);
+  background: rgba(16, 22, 30, 0.82);
+  border-color: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.35);
 }
 
 .app-shell[data-theme="dark"] .convo-list label:has(input:checked) {
   background: rgba(76, 203, 208, 0.22);
   border-color: rgba(76, 203, 208, 0.45);
+  box-shadow: 0 16px 28px rgba(76, 203, 208, 0.25);
+}
+
+.app-shell[data-theme="dark"] .convo-list {
+  background: rgba(12, 18, 26, 0.8);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.app-shell[data-theme="dark"] .convo-list label::before {
+  background: rgba(76, 203, 208, 0.35);
+}
+
+.app-shell[data-theme="dark"] .convo-list label:has(input:checked)::before {
+  background: rgba(76, 203, 208, 0.95);
 }
 
 .app-shell[data-theme="dark"] .memory-preview {
@@ -1638,5 +1897,9 @@ button:focus-visible {
     border-bottom: 1px solid var(--stroke);
     padding-right: 0;
     padding-bottom: 10px;
+  }
+
+  .main--compressed {
+    margin-right: 0;
   }
 }

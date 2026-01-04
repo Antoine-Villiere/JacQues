@@ -27,12 +27,27 @@ def build_index(conversation_id: int) -> None:
             index_path.unlink()
         return
 
-    texts = [row["text"] for row in documents]
-    doc_ids = [row["id"] for row in documents]
-    names = [row["name"] for row in documents]
+    filtered = [
+        (row["id"], row["name"], row["text"])
+        for row in documents
+        if (row["text"] or "").strip()
+    ]
+    if not filtered:
+        if index_path.exists():
+            index_path.unlink()
+        return
+
+    doc_ids = [doc_id for doc_id, _, _ in filtered]
+    names = [name for _, name, _ in filtered]
+    texts = [text for _, _, text in filtered]
 
     vectorizer = TfidfVectorizer(max_features=5000)
-    matrix = vectorizer.fit_transform(texts)
+    try:
+        matrix = vectorizer.fit_transform(texts)
+    except ValueError:
+        if index_path.exists():
+            index_path.unlink()
+        return
 
     payload = {
         "vectorizer": vectorizer,

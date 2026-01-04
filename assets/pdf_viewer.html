@@ -70,6 +70,7 @@
       const params = new URLSearchParams(window.location.search);
       const fileUrl = params.get("file");
       const docId = params.get("doc_id");
+      const isEmbed = params.get("embed") === "1";
       const statusEl = document.getElementById("status");
       const openLink = document.getElementById("open-pdf-link");
       const viewerContainer = document.getElementById("viewerContainer");
@@ -79,7 +80,7 @@
         statusEl.textContent = message || "PDF fallback.";
         if (!url) {
           viewerContainer.innerHTML =
-            "<div style='padding:16px;color:#cbd5e1;'>No PDF to display.</div>";
+            "<div style='padding:16px;color:#94a3b8;'>No PDF to display.</div>";
           return;
         }
         if (openLink) {
@@ -95,6 +96,9 @@
         viewerContainer.appendChild(embed);
       }
 
+      if (isEmbed && openLink) {
+        openLink.style.display = "none";
+      }
       if (!fileUrl) {
         showFallback("", "No PDF selected.");
       }
@@ -106,7 +110,7 @@
       let lastSelection = null;
 
       if (!window.pdfjsLib || !window.pdfjsViewer) {
-        showFallback(fileUrl, "PDF.js indisponible, fallback navigateur.");
+        showFallback(fileUrl, "PDF.js unavailable, using browser fallback.");
       } else {
         pdfjsLib.GlobalWorkerOptions.workerSrc =
           "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -147,7 +151,7 @@
           return;
         }
         if (!window.pdfjsLib || !window.pdfjsViewer || !pdfViewer || !linkService) {
-          showFallback(url, "PDF.js indisponible, fallback navigateur.");
+          showFallback(url, "PDF.js unavailable, using browser fallback.");
           return;
         }
         if (openLink) {
@@ -158,25 +162,31 @@
           clearTimeout(loadTimeout);
           loadTimeout = null;
         }
-        const loadingTask = pdfjsLib.getDocument({
-          url,
-          disableRange: true,
-          disableStream: true,
-          disableAutoFetch: true,
-        });
-        loadingTask
-          .promise.then((pdf) => {
+        let loadingTask = null;
+        try {
+          loadingTask = pdfjsLib.getDocument({
+            url,
+            disableRange: true,
+            disableStream: true,
+            disableAutoFetch: true,
+          });
+        } catch (err) {
+          showFallback(url, `PDF.js error: ${err}`);
+          return;
+        }
+        loadingTask.promise
+          .then((pdf) => {
             pdfViewer.setDocument(pdf);
             linkService.setDocument(pdf, null);
             statusEl.textContent = "PDF loaded.";
           })
           .catch((err) => {
-            showFallback(url, `Chargement PDF impossible: ${err}`);
+            showFallback(url, `Failed to load PDF: ${err}`);
           });
         loadTimeout = window.setTimeout(() => {
           const hasCanvas = viewer && viewer.querySelector("canvas");
           if (!pagesReady || !hasCanvas) {
-            showFallback(url, "PDF.js timeout, fallback navigateur.");
+            showFallback(url, "PDF.js timed out, using browser fallback.");
           }
         }, 4500);
       }
@@ -185,17 +195,39 @@
         return node && viewerContainer && viewerContainer.contains(node);
       }
 
-      function getSelectionInfo(selection) {
-        const text = selection ? selection.toString().trim() : "";
-        if (!text) return null;
-        let node = selection.anchorNode;
-        if (!isInViewer(node)) return null;
-        while (node && !(node.classList && node.classList.contains("page"))) {
-          node = node.parentNode;
+      function findPageNode(node) {
+        let current = node;
+        while (current && current !== document) {
+          if (current.classList && current.classList.contains("page")) {
+            return current;
+          }
+          current = current.parentNode;
         }
+        return null;
+      }
+
+      function normalizeSelectionText(text) {
+        if (!text) return "";
+        return text
+          .replace(/\u00ad/g, "")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
+      function getSelectionInfo(selection) {
+        const rawText = selection ? selection.toString() : "";
+        const text = normalizeSelectionText(rawText);
+        if (!text) return null;
+        let node = selection.anchorNode || selection.focusNode;
+        if (!isInViewer(node)) {
+          const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+          node = range ? range.commonAncestorContainer : node;
+        }
+        if (!isInViewer(node)) return null;
+        let pageNode = findPageNode(node);
         let page = pdfViewer && pdfViewer.currentPageNumber ? pdfViewer.currentPageNumber : 1;
-        if (node && node.dataset && node.dataset.pageNumber) {
-          const parsed = parseInt(node.dataset.pageNumber, 10);
+        if (pageNode && pageNode.dataset && pageNode.dataset.pageNumber) {
+          const parsed = parseInt(pageNode.dataset.pageNumber, 10);
           if (!Number.isNaN(parsed)) {
             page = parsed;
           }
@@ -252,6 +284,12 @@
         .addEventListener("click", highlightSelection);
       document.addEventListener("selectionchange", captureSelection);
       viewerContainer.addEventListener("mouseup", captureSelection);
+      window.addEventListener("error", (event) => {
+        showFallback(fileUrl, `Viewer error: ${event.message || "Unknown error"}`);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        showFallback(fileUrl, `Viewer error: ${event.reason || "Unknown error"}`);
+      });
 
       loadPdf(fileUrl);
     </script>

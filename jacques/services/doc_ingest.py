@@ -34,7 +34,54 @@ def _extract_docx(file_path: Path) -> str:
         raise RuntimeError("python-docx is required for Word ingestion") from exc
 
     doc = Document(str(file_path))
-    chunks = [para.text for para in doc.paragraphs if para.text]
+    chunks: list[str] = []
+
+    def add(text: str) -> None:
+        cleaned = text.strip()
+        if not cleaned:
+            return
+        if chunks and chunks[-1] == cleaned:
+            return
+        chunks.append(cleaned)
+
+    for para in doc.paragraphs:
+        if para.text:
+            add(para.text)
+
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text:
+                    add(cell.text)
+
+    for section in doc.sections:
+        for para in section.header.paragraphs:
+            if para.text:
+                add(para.text)
+        for para in section.footer.paragraphs:
+            if para.text:
+                add(para.text)
+        for table in section.header.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text:
+                        add(cell.text)
+        for table in section.footer.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text:
+                        add(cell.text)
+
+    if not chunks:
+        try:
+            import mammoth
+        except ImportError:
+            mammoth = None
+        if mammoth:
+            raw = mammoth.extract_raw_text(str(file_path)).value
+            if raw:
+                add(raw)
+
     return "\n".join(chunks).strip()
 
 

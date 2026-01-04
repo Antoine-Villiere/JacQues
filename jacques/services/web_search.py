@@ -5,6 +5,8 @@ from typing import Any
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 from ..config import Settings
 
@@ -18,6 +20,25 @@ DEFAULT_HEADERS = {
 }
 
 
+def _retry_session(settings: Settings) -> requests.Session:
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        backoff_factor=0.6,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "HEAD"],
+        respect_retry_after_header=True,
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry, pool_maxsize=10)
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+    return session
+
+
 def is_url(text: str) -> bool:
     return text.startswith("http://") or text.startswith("https://")
 
@@ -28,10 +49,10 @@ def fetch_url(
     selector: str | None = None,
     max_chars: int | None = None,
 ) -> str:
-    response = requests.get(
+    session = _retry_session(settings)
+    response = session.get(
         url,
         timeout=settings.web_timeout,
-        headers=DEFAULT_HEADERS,
     )
     response.raise_for_status()
     if selector:
@@ -202,8 +223,9 @@ def _brave_search(
         "X-Subscription-Token": settings.brave_api_key,
         "User-Agent": DEFAULT_HEADERS["User-Agent"],
     }
+    session = _retry_session(settings)
     try:
-        response = requests.get(
+        response = session.get(
             endpoint,
             params=params,
             headers=headers,
@@ -290,8 +312,9 @@ def _brave_news_search(
         "X-Subscription-Token": settings.brave_api_key,
         "User-Agent": DEFAULT_HEADERS["User-Agent"],
     }
+    session = _retry_session(settings)
     try:
-        response = requests.get(
+        response = session.get(
             endpoint,
             params=params,
             headers=headers,

@@ -301,6 +301,7 @@ def _export_all_data() -> Path:
         for table in [
             "conversations",
             "messages",
+            "message_branches",
             "documents",
             "images",
             "pdf_highlights",
@@ -335,27 +336,115 @@ def _tool_message_is_error(content: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
-def _render_messages(rows: List[sqlite3.Row]):
+def _render_messages(
+    rows: List[sqlite3.Row],
+    branches_by_pivot: dict[int, list[sqlite3.Row]],
+    active_by_pivot: dict[int, int],
+    active_branch: int,
+    edit_message_id: int | None,
+):
     if not rows:
         return [html.Div("No messages yet.", className="status")]
     rendered = []
     for row in rows:
         role = row["role"]
+        message_id = int(row["id"])
         if role == "tool" and not _tool_message_is_error(row["content"] or ""):
             continue
-        rendered.append(
-            html.Div(
-                className=_message_class(role),
-                children=[
-                    html.Div(role.upper(), className="message-role"),
-                    dcc.Markdown(
-                        row["content"],
-                        className="message-content",
-                        link_target="_blank",
-                    ),
-                ],
+        is_editing = role == "user" and edit_message_id == message_id
+        header_children = [html.Div(role.upper(), className="message-role")]
+        if role == "user":
+            header_children.append(
+                html.Button(
+                    "Edit",
+                    id={"type": "message-edit", "index": message_id},
+                    className="message-edit-btn",
+                )
             )
-        )
+        message_children = [html.Div(header_children, className="message-header")]
+        if is_editing:
+            message_children.append(
+                dcc.Textarea(
+                    id={"type": "message-edit-input", "index": message_id},
+                    value=row["content"],
+                    className="message-edit-input",
+                )
+            )
+            message_children.append(
+                html.Div(
+                    className="message-edit-actions",
+                    children=[
+                        html.Button(
+                            "Save & Regenerate",
+                            id={"type": "message-edit-save", "index": message_id},
+                            className="icon-btn",
+                        ),
+                        html.Button(
+                            "Cancel",
+                            id={"type": "message-edit-cancel", "index": message_id},
+                            className="icon-btn",
+                        ),
+                    ],
+                )
+            )
+        else:
+            message_children.append(
+                dcc.Markdown(
+                    row["content"],
+                    className="message-content",
+                    link_target="_blank",
+                )
+            )
+        rendered.append(html.Div(className=_message_class(role), children=message_children))
+
+        pivot_id = message_id
+        if role == "user" and row["edit_of"]:
+            try:
+                pivot_id = int(row["edit_of"])
+            except Exception:
+                pivot_id = message_id
+
+        if role == "user" and pivot_id in branches_by_pivot:
+            branches = sorted(
+                branches_by_pivot[pivot_id],
+                key=lambda branch: int(branch["id"]),
+            )
+            active_choice = int(active_by_pivot.get(pivot_id, 0))
+            branch_buttons = [
+                html.Button(
+                    "Original",
+                    id={"type": "branch-switch", "pivot": pivot_id, "branch": 0},
+                    className=(
+                        "branch-btn branch-btn--active"
+                        if active_choice == 0
+                        else "branch-btn"
+                    ),
+                )
+            ]
+            for idx, branch in enumerate(branches, start=1):
+                branch_id = int(branch["id"])
+                label = f"Edit {idx}"
+                branch_buttons.append(
+                    html.Button(
+                        label,
+                        id={
+                            "type": "branch-switch",
+                            "pivot": pivot_id,
+                            "branch": branch_id,
+                        },
+                        className=(
+                            "branch-btn branch-btn--active"
+                            if branch_id == active_choice
+                            else "branch-btn"
+                        ),
+                    )
+                )
+            rendered.append(
+                html.Div(
+                    className="branch-switch",
+                    children=branch_buttons,
+                )
+            )
     return rendered
 
 
@@ -449,6 +538,8 @@ def _stream_response(
     use_rag: bool,
     use_web: bool,
     assistant_message_id: int,
+    active_file: dict | None,
+    branch_id: int,
 ) -> None:
     streamed = False
 
@@ -471,6 +562,8 @@ def _stream_response(
             on_token=on_token,
             on_tool_event=on_tool_event,
             should_cancel=lambda: _is_cancelled(conversation_id),
+            active_file=active_file,
+            branch_id=branch_id,
         )
     except Exception as exc:
         reply = f"LLM error: {exc}"
@@ -480,14 +573,14 @@ def _stream_response(
         elif not streamed:
             db.update_message_content(assistant_message_id, "No response generated.")
         assistant.maybe_update_conversation_title(
-            conversation_id, settings, force_first=True
+            conversation_id, settings, force_first=True, branch_id=branch_id
         )
         _set_streaming(conversation_id, False)
         _set_cancelled(conversation_id, False)
 
 
-def _latest_tool_name(conversation_id: int) -> str | None:
-    row = db.get_latest_tool_message(conversation_id)
+def _latest_tool_name(conversation_id: int, branch_id: int | None = None) -> str | None:
+    row = db.get_latest_tool_message(conversation_id, branch_id=branch_id)
     if not row:
         return None
     content = row["content"] or ""
@@ -948,6 +1041,7 @@ app.layout = html.Div(
         dcc.Store(id="chat-refresh", data=0),
         dcc.Store(id="docs-refresh", data=0),
         dcc.Store(id="images-refresh", data=0),
+        dcc.Store(id="edit-message", data=None),
         dcc.Store(
             id="stream-state",
             data={"convo_id": str(default_convo_id), "is_streaming": False},
@@ -1009,6 +1103,7 @@ app.layout = html.Div(
             ],
         ),
         html.Div(
+            id="main-shell",
             className="main",
             children=[
                 html.Div(
@@ -1680,14 +1775,184 @@ def create_conversation(n_clicks: int):
     Output("chat-title", "children"),
     Input("convo-dropdown", "value"),
     Input("chat-refresh", "data"),
+    Input("edit-message", "data"),
 )
-def refresh_chat(convo_id: str | None, refresh: int):
+def refresh_chat(convo_id: str | None, refresh: int, edit_message_id: int | None):
     if not convo_id:
         return [html.Div("Select a conversation.", className="status")], ""
     conversation = db.get_conversation(int(convo_id))
-    rows = db.get_messages(int(convo_id))
+    active_branch = int(conversation["active_branch"] or 0) if conversation else 0
+    rows = db.get_messages_for_branch(int(convo_id), branch_id=active_branch)
+    branches = db.list_message_branches(int(convo_id))
+    branch_by_pivot: dict[int, list[sqlite3.Row]] = {}
+    for branch in branches:
+        pivot_id = int(branch["pivot_message_id"])
+        branch_by_pivot.setdefault(pivot_id, []).append(branch)
+    active_by_pivot = {
+        int(branch["pivot_message_id"]): int(branch["id"])
+        for branch in db.get_branch_chain(int(convo_id), active_branch)
+    }
     title = conversation["title"] if conversation else "Conversation"
-    return _render_messages(rows), title
+    return (
+        _render_messages(rows, branch_by_pivot, active_by_pivot, active_branch, edit_message_id),
+        title,
+    )
+
+
+@app.callback(
+    Output("edit-message", "data", allow_duplicate=True),
+    Input({"type": "message-edit", "index": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def start_edit_message(n_clicks: list[int] | None):
+    trigger = dash.callback_context.triggered_id
+    if not trigger:
+        return no_update
+    try:
+        return int(trigger["index"])
+    except Exception:
+        return no_update
+
+
+@app.callback(
+    Output("chat-refresh", "data", allow_duplicate=True),
+    Output("edit-message", "data", allow_duplicate=True),
+    Output("action-status", "children", allow_duplicate=True),
+    Input({"type": "message-edit-save", "index": ALL}, "n_clicks"),
+    Input({"type": "message-edit-cancel", "index": ALL}, "n_clicks"),
+    State({"type": "message-edit-input", "index": ALL}, "value"),
+    State({"type": "message-edit-input", "index": ALL}, "id"),
+    State("chat-refresh", "data"),
+    State("convo-dropdown", "value"),
+    State("active-file", "data"),
+    prevent_initial_call=True,
+)
+def handle_edit_message(
+    save_clicks: list[int] | None,
+    cancel_clicks: list[int] | None,
+    input_values: list[str] | None,
+    input_ids: list[dict] | None,
+    refresh_value: int,
+    convo_id: str | None,
+    active_file: dict | None,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger:
+        return no_update, no_update, no_update
+    if trigger.get("type") == "message-edit-cancel":
+        return no_update, None, "Edit cancelled."
+    if trigger.get("type") != "message-edit-save":
+        return no_update, no_update, no_update
+    if not convo_id:
+        return no_update, None, "Select a conversation first."
+    conversation_id = int(convo_id)
+    if _is_streaming(conversation_id):
+        return no_update, None, "A response is already streaming."
+
+    message_id = int(trigger.get("index"))
+    new_text = None
+    for comp_id, value in zip(input_ids or [], input_values or []):
+        if not comp_id:
+            continue
+        try:
+            if int(comp_id.get("index", -1)) == message_id:
+                new_text = value
+                break
+        except Exception:
+            continue
+
+    edited_message = (new_text or "").strip()
+    if not edited_message:
+        return no_update, None, "Edited message is empty."
+
+    parent_branch = db.get_conversation_active_branch(conversation_id)
+    branch_id = db.add_branch(conversation_id, parent_branch, message_id)
+    db.set_conversation_active_branch(conversation_id, branch_id)
+    db.add_message(
+        conversation_id,
+        "user",
+        edited_message,
+        branch_id=branch_id,
+        edit_of=message_id,
+    )
+    _set_cancelled(conversation_id, False)
+
+    use_rag = bool(db.list_documents(conversation_id))
+    use_web = _setting_enabled("tools_web_enabled", True)
+
+    def on_tool_event(name: str, stage: str) -> None:
+        _set_tool_status(conversation_id, name, stage)
+
+    if settings.llm_streaming:
+        assistant_message_id = db.add_message(
+            conversation_id, "assistant", "", branch_id=branch_id
+        )
+        _set_streaming(conversation_id, True)
+        thread = threading.Thread(
+            target=_stream_response,
+            args=(
+                conversation_id,
+                edited_message,
+                use_rag,
+                use_web,
+                assistant_message_id,
+                active_file,
+                branch_id,
+            ),
+            daemon=True,
+        )
+        thread.start()
+        return (refresh_value or 0) + 1, None, "Regenerating response..."
+
+    reply = assistant.respond(
+        conversation_id,
+        edited_message,
+        settings,
+        use_rag=use_rag,
+        use_web=use_web,
+        on_tool_event=on_tool_event,
+        should_cancel=lambda: _is_cancelled(conversation_id),
+        active_file=active_file,
+        branch_id=branch_id,
+    )
+    db.add_message(conversation_id, "assistant", reply, branch_id=branch_id)
+    assistant.maybe_update_conversation_title(
+        conversation_id, settings, force_first=True, branch_id=branch_id
+    )
+    return (refresh_value or 0) + 1, None, "Response regenerated."
+
+
+@app.callback(
+    Output("chat-refresh", "data", allow_duplicate=True),
+    Output("edit-message", "data", allow_duplicate=True),
+    Input({"type": "branch-switch", "pivot": ALL, "branch": ALL}, "n_clicks"),
+    State("chat-refresh", "data"),
+    State("convo-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def switch_branch(
+    n_clicks: list[int] | None,
+    refresh_value: int,
+    convo_id: str | None,
+):
+    trigger = dash.callback_context.triggered_id
+    if not trigger or not convo_id:
+        return no_update, no_update
+    try:
+        branch_id = int(trigger.get("branch", 0))
+    except Exception:
+        branch_id = 0
+    db.set_conversation_active_branch(int(convo_id), branch_id)
+    return (refresh_value or 0) + 1, None
+
+
+@app.callback(
+    Output("edit-message", "data", allow_duplicate=True),
+    Input("convo-dropdown", "value"),
+    prevent_initial_call=True,
+)
+def reset_edit_message(convo_id: str | None):
+    return None
 
 
 @app.callback(
@@ -1753,6 +2018,7 @@ def edit_conversation_title(
     State("chat-refresh", "data"),
     State("convo-dropdown", "value"),
     State("user-input", "value"),
+    State("active-file", "data"),
     prevent_initial_call=True,
 )
 def send_message(
@@ -1760,6 +2026,7 @@ def send_message(
     refresh_value: int,
     convo_id: str | None,
     user_text: str | None,
+    active_file: dict | None,
 ):
     if not n_clicks:
         return no_update, no_update, no_update
@@ -1773,17 +2040,20 @@ def send_message(
     use_web = _setting_enabled("tools_web_enabled", True)
 
     conversation_id = int(convo_id)
+    branch_id = db.get_conversation_active_branch(conversation_id)
     if _is_streaming(conversation_id):
         return no_update, "A response is already streaming.", ""
 
-    db.add_message(conversation_id, "user", message)
+    db.add_message(conversation_id, "user", message, branch_id=branch_id)
     _set_cancelled(conversation_id, False)
 
     def on_tool_event(name: str, stage: str) -> None:
         _set_tool_status(conversation_id, name, stage)
 
     if settings.llm_streaming:
-        assistant_message_id = db.add_message(conversation_id, "assistant", "")
+        assistant_message_id = db.add_message(
+            conversation_id, "assistant", "", branch_id=branch_id
+        )
         _set_streaming(conversation_id, True)
         thread = threading.Thread(
             target=_stream_response,
@@ -1793,11 +2063,13 @@ def send_message(
                 use_rag,
                 use_web,
                 assistant_message_id,
+                active_file,
+                branch_id,
             ),
             daemon=True,
         )
         thread.start()
-        return refresh_value + 1, "Streaming response...", ""
+        return refresh_value + 1, "", ""
 
     reply = assistant.respond(
         conversation_id,
@@ -1807,10 +2079,12 @@ def send_message(
         use_web=use_web,
         on_tool_event=on_tool_event,
         should_cancel=lambda: _is_cancelled(conversation_id),
+        active_file=active_file,
+        branch_id=branch_id,
     )
-    db.add_message(conversation_id, "assistant", reply)
+    db.add_message(conversation_id, "assistant", reply, branch_id=branch_id)
     assistant.maybe_update_conversation_title(
-        conversation_id, settings, force_first=True
+        conversation_id, settings, force_first=True, branch_id=branch_id
     )
     return refresh_value + 1, "Response generated.", ""
 
@@ -1936,7 +2210,7 @@ def refresh_files(docs_refresh: int, images_refresh: int, convo_id: str | None):
 
     return html.Div(
         [
-            html.Div("Fichiers", className="sources-title"),
+            html.Div("Files", className="sources-title"),
             html.Div(items, className="files-items"),
         ],
         className="files-block",
@@ -2038,13 +2312,24 @@ def render_file_offcanvas(active_file: dict | None):
             ],
             className="file-viewer",
         )
-        return "offcanvas offcanvas--open", name, body
+    return "offcanvas offcanvas--open", name, body
+
+
+@app.callback(
+    Output("main-shell", "className"),
+    Input("active-file", "data"),
+)
+def toggle_main_layout(active_file: dict | None):
+    if active_file:
+        return "main main--compressed"
+    return "main"
 
     doc_type = (active_file.get("doc_type") or path.suffix).lower()
     if doc_type == ".pdf":
         file_url = _data_url(path_str)
+        encoded_file = quote(file_url, safe="")
         highlight_url = (
-            f"/assets/pdf_viewer.html?file={file_url}&doc_id={active_file.get('id')}&embed=1"
+            f"/assets/pdf_viewer.html?file={encoded_file}&doc_id={active_file.get('id')}&embed=1"
         )
         body = html.Div(
             [
@@ -2063,7 +2348,7 @@ def render_file_offcanvas(active_file: dict | None):
             body = html.Div(
                 [
                     html.Div(
-                        "OnlyOffice editor actif.",
+                        "OnlyOffice editor active.",
                         className="status",
                     ),
                     html.Iframe(src=iframe_src, className="office-frame"),
@@ -2075,7 +2360,7 @@ def render_file_offcanvas(active_file: dict | None):
         try:
             preview_component = _render_word_preview(path)
             status = (
-                "OnlyOffice requis pour l'edition fidele. Configurez-le pour modifier ce document."
+                "OnlyOffice is required for faithful editing. Configure it to edit this document."
             )
         except Exception as exc:
             preview_component = html.Pre("", className="file-preview")
@@ -2096,7 +2381,7 @@ def render_file_offcanvas(active_file: dict | None):
             body = html.Div(
                 [
                     html.Div(
-                        "OnlyOffice editor actif.",
+                        "OnlyOffice editor active.",
                         className="status",
                     ),
                     html.Iframe(src=iframe_src, className="office-frame"),
@@ -2157,7 +2442,7 @@ def render_file_offcanvas(active_file: dict | None):
                         className="status",
                     ),
                     html.Button(
-                        "Envoyer la selection au chat",
+                        "Send selection to chat",
                         id={"type": "excel-action", "name": "send-selection", "doc": doc_id},
                         className="icon-btn",
                     ),
@@ -2211,9 +2496,9 @@ def update_excel_selection(
     table_columns: list[dict] | None,
 ):
     if not selected_cells:
-        return "", "Aucune selection."
+        return "", "No selection."
     if len(selected_cells) > 200:
-        return "", "Selection trop grande (max 200 cellules)."
+        return "", "Selection too large (max 200 cells)."
 
     data = table_data or []
     columns = [col["id"] for col in (table_columns or [])]
@@ -2226,7 +2511,7 @@ def update_excel_selection(
             value = data[row_idx].get(col_id, "")
         lines.append(f"R{row_idx + 2} {col_id}: {value}")
     text = "Excel selection:\n" + "\n".join(lines)
-    preview = f"{len(selected_cells)} cellules selectionnees."
+    preview = f"{len(selected_cells)} cells selected."
     return text, preview
 
 
@@ -3065,19 +3350,22 @@ def refresh_tool_status(refresh_value: int, n_intervals: int, convo_id: str | No
     if not convo_id:
         return ""
     conversation_id = int(convo_id)
+    branch_id = db.get_conversation_active_branch(conversation_id)
     state = _get_tool_status(conversation_id) or {}
-    tool_name = state.get("name") or _latest_tool_name(conversation_id)
+    tool_name = state.get("name") or _latest_tool_name(
+        conversation_id, branch_id=branch_id
+    )
     stage = state.get("stage", "result") if tool_name else "idle"
 
     if tool_name:
         if stage == "call":
-            text = f"Outil en cours: {tool_name}"
+            text = f"Tool running: {tool_name}"
             loader_class = "tool-loader"
         else:
-            text = f"Dernier outil: {tool_name}"
+            text = f"Last tool: {tool_name}"
             loader_class = "tool-loader tool-loader--idle"
     else:
-        text = "Aucun outil appele."
+        text = ""
         loader_class = "tool-loader tool-loader--idle"
     return html.Div(
         [
@@ -3168,7 +3456,10 @@ def refresh_mailto_data(
     if not convo_id:
         return {}
     conversation_id = int(convo_id)
-    row = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
+    branch_id = db.get_conversation_active_branch(conversation_id)
+    row = db.get_latest_tool_call_message_by_name(
+        conversation_id, "email_draft", branch_id=branch_id
+    )
     if not row:
         return {}
     if not _is_recent_message(row["created_at"], MAILTO_RECENT_SECONDS):
@@ -3196,7 +3487,10 @@ def render_email_status(refresh_value: int, convo_id: str | None):
     if not convo_id:
         return ""
     conversation_id = int(convo_id)
-    row_call = db.get_latest_tool_call_message_by_name(conversation_id, "email_draft")
+    branch_id = db.get_conversation_active_branch(conversation_id)
+    row_call = db.get_latest_tool_call_message_by_name(
+        conversation_id, "email_draft", branch_id=branch_id
+    )
     if not row_call:
         return ""
     args = _extract_tool_call_args(row_call["content"] or "")
@@ -3204,7 +3498,9 @@ def render_email_status(refresh_value: int, convo_id: str | None):
     if not mailto:
         return ""
     status_line = "Email draft ready."
-    row_result = db.get_latest_tool_message_by_name(conversation_id, "email_draft")
+    row_result = db.get_latest_tool_message_by_name(
+        conversation_id, "email_draft", branch_id=branch_id
+    )
     if row_result:
         payload = _extract_tool_result_text(row_result["content"] or "")
         if payload:
@@ -3243,7 +3539,10 @@ def refresh_calendar_data(
     if not convo_id:
         return {}
     conversation_id = int(convo_id)
-    row = db.get_latest_tool_message_by_name(conversation_id, "calendar_event")
+    branch_id = db.get_conversation_active_branch(conversation_id)
+    row = db.get_latest_tool_message_by_name(
+        conversation_id, "calendar_event", branch_id=branch_id
+    )
     if not row:
         return {}
     if not _is_recent_message(row["created_at"], CALENDAR_RECENT_SECONDS):
@@ -3270,7 +3569,10 @@ def render_calendar_status(refresh_value: int, convo_id: str | None):
     if not convo_id:
         return ""
     conversation_id = int(convo_id)
-    row = db.get_latest_tool_message_by_name(conversation_id, "calendar_event")
+    branch_id = db.get_conversation_active_branch(conversation_id)
+    row = db.get_latest_tool_message_by_name(
+        conversation_id, "calendar_event", branch_id=branch_id
+    )
     if not row:
         return ""
     payload = _extract_tool_result_text(row["content"] or "")

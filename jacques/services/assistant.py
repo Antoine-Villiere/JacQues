@@ -1,17 +1,20 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from pathlib import Path
 import json
+import re
 
 from ..config import Settings
 from .. import db
-from . import commands, rag, web_search
+from . import commands, doc_ingest, rag, web_search
 from .llm import LLMClient
 from .tooling import build_tools, execute_tool
 
 
 SYSTEM_PROMPT = (
     "You are Jacques, a capable assistant. "
+    "Respond in English. "
     "You manage multiple conversations with memory, answer questions, "
     "and use tools proactively when helpful. "
     "If the user refers to an uploaded image, check available images and use "
@@ -19,6 +22,8 @@ SYSTEM_PROMPT = (
     "If the user mentions @\"filename\" or @filename, treat it as a direct reference to that document. "
     "If details are missing, ask a brief follow-up question. "
     "When tools are used, summarize what was done and the result. "
+    "If the user asks multiple tasks in one message, handle every item and use multiple tools if needed. "
+    "Never include tool call logs or a 'Tools used' section in the response. "
     "Decide yourself when to update memory: only store stable preferences "
     "or enduring facts the user would expect you to remember. "
     "If unsure, ask first. Use the memory_append tool when appropriate. "
@@ -38,6 +43,7 @@ SYSTEM_PROMPT = (
 )
 
 AUTO_TITLE_INTERVAL = 6
+_DOC_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".xls", ".xlsm", ".csv"}
 
 
 def respond(
@@ -48,12 +54,18 @@ def respond(
     use_web: bool = False,
     on_tool_event: Callable[[str, str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    active_file: dict | None = None,
+    branch_id: int | None = None,
 ) -> str:
     command_reply = commands.handle_command(user_message, settings, conversation_id)
     if command_reply is not None:
         return command_reply
 
-    history = db.get_messages(conversation_id, limit=settings.max_history_messages)
+    if branch_id is None:
+        branch_id = db.get_conversation_active_branch(conversation_id)
+    history = db.get_messages_for_branch(
+        conversation_id, branch_id=branch_id, limit=settings.max_history_messages
+    )
     history_for_llm = [row for row in history if row["role"] in {"user", "assistant"}]
 
     llm = LLMClient(settings)
@@ -65,6 +77,19 @@ def respond(
     )
 
     messages = [{"role": "system", "content": _build_system_prompt()}]
+    active_context = _active_file_context(active_file)
+    if active_context:
+        messages.append({"role": "system", "content": active_context})
+    doc_context, doc_updated = _doc_context_from_mentions(user_message, conversation_id)
+    if doc_updated:
+        rag.build_index(conversation_id)
+    if doc_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Document references:\n{doc_context}",
+            }
+        )
     if use_rag:
         rag_context = rag.format_results(
             rag.search(user_message, settings, conversation_id), max_chars=900
@@ -95,7 +120,7 @@ def respond(
         messages.append({"role": "user", "content": user_message})
 
     def log_tool_event(content: str) -> None:
-        db.add_message(conversation_id, "tool", content)
+        db.add_message(conversation_id, "tool", content, branch_id=branch_id)
 
     reply = _run_tool_loop(
         llm,
@@ -107,6 +132,7 @@ def respond(
         log_tool_event,
         on_tool_event,
         should_cancel,
+        _tool_budget(user_message, settings),
     )
     return reply or "No response generated."
 
@@ -120,6 +146,8 @@ def respond_streaming(
     on_token: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    active_file: dict | None = None,
+    branch_id: int | None = None,
 ) -> str:
     command_reply = commands.handle_command(user_message, settings, conversation_id)
     if command_reply is not None:
@@ -127,7 +155,11 @@ def respond_streaming(
             on_token(command_reply)
         return command_reply
 
-    history = db.get_messages(conversation_id, limit=settings.max_history_messages)
+    if branch_id is None:
+        branch_id = db.get_conversation_active_branch(conversation_id)
+    history = db.get_messages_for_branch(
+        conversation_id, branch_id=branch_id, limit=settings.max_history_messages
+    )
     history_for_llm = [row for row in history if row["role"] in {"user", "assistant"}]
 
     llm = LLMClient(settings)
@@ -142,6 +174,19 @@ def respond_streaming(
     )
 
     messages = [{"role": "system", "content": _build_system_prompt()}]
+    active_context = _active_file_context(active_file)
+    if active_context:
+        messages.append({"role": "system", "content": active_context})
+    doc_context, doc_updated = _doc_context_from_mentions(user_message, conversation_id)
+    if doc_updated:
+        rag.build_index(conversation_id)
+    if doc_context:
+        messages.append(
+            {
+                "role": "system",
+                "content": f"Document references:\n{doc_context}",
+            }
+        )
     if use_rag:
         rag_context = rag.format_results(
             rag.search(user_message, settings, conversation_id), max_chars=900
@@ -172,7 +217,7 @@ def respond_streaming(
         messages.append({"role": "user", "content": user_message})
 
     def log_tool_event(content: str) -> None:
-        db.add_message(conversation_id, "tool", content)
+        db.add_message(conversation_id, "tool", content, branch_id=branch_id)
 
     reply = _run_tool_loop_streaming(
         llm,
@@ -185,12 +230,16 @@ def respond_streaming(
         on_token,
         on_tool_event,
         should_cancel,
+        _tool_budget(user_message, settings),
     )
     return reply or "No response generated."
 
 
 def maybe_update_conversation_title(
-    conversation_id: int, settings: Settings, force_first: bool = False
+    conversation_id: int,
+    settings: Settings,
+    force_first: bool = False,
+    branch_id: int | None = None,
 ) -> str | None:
     conversation = db.get_conversation(conversation_id)
     if not conversation:
@@ -199,7 +248,9 @@ def maybe_update_conversation_title(
     if auto_title is not None and int(auto_title) == 0:
         return None
 
-    messages = db.get_messages(conversation_id)
+    if branch_id is None:
+        branch_id = db.get_conversation_active_branch(conversation_id)
+    messages = db.get_messages_for_branch(conversation_id, branch_id=branch_id)
     user_messages = [row["content"] for row in messages if row["role"] == "user"]
     assistant_messages = [row["content"] for row in messages if row["role"] == "assistant"]
     if not user_messages:
@@ -247,7 +298,7 @@ def _generate_conversation_title(
     first_text = clip(first)
     recent_text = "\n".join(f"- {clip(msg, 220)}" for msg in recent) or "- (none)"
     prompt = (
-        "Create a short French conversation title (3-6 words). "
+        "Create a short English conversation title (3-6 words). "
         "Use Title Case, no quotes, no emojis. "
         "Blend the first topic with the most recent topics.\n\n"
         f"First topic: {first_text}\n"
@@ -259,7 +310,7 @@ def _generate_conversation_title(
             messages=[
                 {
                     "role": "system",
-                    "content": "You write short, polished French conversation titles.",
+                    "content": "You write short, polished English conversation titles.",
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -289,6 +340,24 @@ def _fallback_title(text: str) -> str:
     return title[:60]
 
 
+def _tool_budget(user_message: str, settings: Settings) -> int:
+    base = settings.max_tool_calls
+    text = (user_message or "").strip()
+    if not text:
+        return base
+    segments = [seg.strip() for seg in re.split(r"[\\n;]+", text) if seg.strip()]
+    if len(segments) < 2:
+        pieces = [seg.strip() for seg in re.split(r"[.!?]+", text) if seg.strip()]
+    else:
+        pieces = segments
+    task_count = max(1, len(pieces))
+    if task_count >= 3:
+        return max(base, 8)
+    if task_count >= 2:
+        return max(base, 6)
+    return base
+
+
 def _run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
@@ -299,6 +368,7 @@ def _run_tool_loop(
     log_tool_event: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    max_steps: int | None = None,
 ) -> str:
     if should_cancel and should_cancel():
         return "Stopped by user."
@@ -310,12 +380,13 @@ def _run_tool_loop(
         return str(response.get("content") or "").strip()
 
     steps = 0
+    step_budget = max_steps if isinstance(max_steps, int) and max_steps > 0 else settings.max_tool_calls
     used_tools = False
     latest_sources: str | None = None
     tool_summaries: list[tuple[str, str]] = []
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
-    while steps < settings.max_tool_calls:
+    while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
         try:
@@ -328,9 +399,13 @@ def _run_tool_loop(
             final_content = str(content).strip()
             if used_tools and settings.text_model != settings.reasoning_model:
                 try:
-                    text_response = llm.chat(
-                        messages, model=settings.text_model, tools=tools
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": "Provide the final answer now. Do not call tools.",
+                        }
                     )
+                    text_response = llm.chat(messages, model=settings.text_model, tools=None)
                 except Exception as exc:
                     return f"LLM error: {exc}"
                 text_content = str(text_response.get("content") or "").strip()
@@ -366,7 +441,7 @@ def _run_tool_loop(
                 log_tool_event(_format_tool_result(name, result))
             if on_tool_event and name:
                 on_tool_event(name, "result")
-            if name == "web_search" and result.strip().lower().startswith("sources:"):
+            if name in {"web_search", "news_search"} and result.strip().lower().startswith("sources:"):
                 latest_sources = result
             if name:
                 tool_summaries.append((name, result))
@@ -396,7 +471,13 @@ def _run_tool_loop(
         }
     )
     try:
-        response = llm.chat(messages, model=settings.text_model, tools=tools)
+        messages.append(
+            {
+                "role": "system",
+                "content": "Do not call tools. Respond with the final answer only.",
+            }
+        )
+        response = llm.chat(messages, model=settings.text_model, tools=None)
     except Exception as exc:
         return f"LLM error: {exc}"
     return _append_tool_summary(
@@ -415,6 +496,7 @@ def _run_tool_loop_streaming(
     on_token: Callable[[str], None] | None = None,
     on_tool_event: Callable[[str, str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
+    max_steps: int | None = None,
 ) -> str:
     def stream_or_chat(model: str, toolset: list[dict[str, Any]] | None):
         if settings.llm_streaming and on_token:
@@ -441,12 +523,13 @@ def _run_tool_loop_streaming(
         return content
 
     steps = 0
+    step_budget = max_steps if isinstance(max_steps, int) and max_steps > 0 else settings.max_tool_calls
     used_tools = False
     latest_sources: str | None = None
     tool_summaries: list[tuple[str, str]] = []
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
-    while steps < settings.max_tool_calls:
+    while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
         content, tool_calls, cancelled = stream_or_chat(settings.reasoning_model, tools)
@@ -454,8 +537,14 @@ def _run_tool_loop_streaming(
             return f"{content}\n\n(Stopped by user.)".strip() if content else "Stopped by user."
         if not tool_calls:
             if used_tools and settings.text_model != settings.reasoning_model:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": "Provide the final answer now. Do not call tools.",
+                    }
+                )
                 text_content, text_tool_calls, cancelled_text = stream_or_chat(
-                    settings.text_model, tools
+                    settings.text_model, None
                 )
                 if cancelled_text:
                     return (
@@ -496,7 +585,7 @@ def _run_tool_loop_streaming(
                 log_tool_event(_format_tool_result(name, result))
             if on_tool_event and name:
                 on_tool_event(name, "result")
-            if name == "web_search" and result.strip().lower().startswith("sources:"):
+            if name in {"web_search", "news_search"} and result.strip().lower().startswith("sources:"):
                 latest_sources = result
             if name:
                 tool_summaries.append((name, result))
@@ -525,7 +614,13 @@ def _run_tool_loop_streaming(
             "content": "Tool budget reached. Provide the best possible final answer now.",
         }
     )
-    final_content, _, cancelled = stream_or_chat(settings.text_model, tools)
+    messages.append(
+        {
+            "role": "system",
+            "content": "Do not call tools. Respond with the final answer only.",
+        }
+    )
+    final_content, _, cancelled = stream_or_chat(settings.text_model, None)
     if cancelled:
         return f"{final_content}\n\n(Stopped by user.)".strip() if final_content else "Stopped by user."
     return _append_tool_summary(final_content, tool_summaries, latest_sources)
@@ -586,11 +681,6 @@ def _needs_tool_summary(answer: str) -> bool:
     markers = [
         "tools used",
         "tool used",
-        "outil",
-        "outils",
-        "j'ai utilise",
-        "j’ai utilise",
-        "j ai utilise",
         "used the tool",
     ]
     return not any(marker in lowered for marker in markers)
@@ -602,21 +692,36 @@ def _append_tool_summary(
     sources: str | None,
 ) -> str:
     text = answer.strip() if answer else ""
-    if tool_summaries and _needs_tool_summary(text):
-        lines = []
-        for name, result in tool_summaries:
-            if name == "web_search":
-                summary = "retrieved web sources"
-            elif name in {"plot_generate", "plot_fred_series"}:
-                summary = "generated a plot image"
-            elif name == "image_generate":
-                summary = "generated an image"
-            else:
-                summary = _clip_text(result)
-            lines.append(f"- {name}: {summary}")
-        summary_block = "Tools used:\n" + "\n".join(lines)
-        text = f"{text}\n\n{summary_block}".strip()
+    image_blocks = _collect_tool_images(tool_summaries, text)
+    if image_blocks:
+        text = f"{text}\n\n{image_blocks}".strip()
     return _maybe_append_sources(text, sources)
+
+
+def _collect_tool_images(tool_summaries: list[tuple[str, str]], answer: str) -> str:
+    if not tool_summaries:
+        return ""
+    existing = {url for _, url in _extract_markdown_images(answer)}
+    blocks: list[str] = []
+    seen = set(existing)
+    for _, result in tool_summaries:
+        for markup, url in _extract_markdown_images(result or ""):
+            if url in seen:
+                continue
+            seen.add(url)
+            blocks.append(markup)
+    return "\n".join(blocks).strip()
+
+
+def _extract_markdown_images(text: str) -> list[tuple[str, str]]:
+    if not text:
+        return []
+    matches: list[tuple[str, str]] = []
+    for match in re.finditer(r"!\[[^\]]*]\(([^)]+)\)", text):
+        url = match.group(1).strip()
+        if url:
+            matches.append((match.group(0), url))
+    return matches
 
 
 def _fallback_response(
@@ -627,6 +732,11 @@ def _fallback_response(
     conversation_id: int,
 ) -> str:
     context_blocks = []
+    doc_context, doc_updated = _doc_context_from_mentions(user_message, conversation_id)
+    if doc_updated:
+        rag.build_index(conversation_id)
+    if doc_context:
+        context_blocks.append("Document references:\n" + doc_context)
     if use_rag:
         results = rag.search(user_message, settings, conversation_id)
         rag_context = rag.format_results(results)
@@ -656,6 +766,96 @@ def _maybe_append_sources(answer: str, sources: str | None) -> str:
     if "sources:" in answer.lower():
         return answer
     return f"{answer.rstrip()}\n\n{sources.strip()}"
+
+
+def _extract_doc_mentions(text: str) -> list[str]:
+    if not text:
+        return []
+    mentions: list[str] = []
+    for match in re.finditer(r'@"([^"]+)"', text):
+        name = match.group(1).strip()
+        if name:
+            mentions.append(name)
+    for match in re.finditer(r"@([^\s@]+)", text):
+        token = match.group(1).strip()
+        if not token or token.startswith('"'):
+            continue
+        name = token.strip(",. ")
+        lowered = name.lower()
+        if any(lowered.endswith(ext) for ext in _DOC_EXTENSIONS):
+            mentions.append(name)
+    return list(dict.fromkeys(mentions))
+
+
+def _resolve_document_by_name(conversation_id: int, name: str) -> Any | None:
+    doc = db.get_document_by_name(conversation_id, name)
+    if doc:
+        return doc
+    for row in db.list_documents(conversation_id):
+        if str(row["name"]).lower() == name.lower():
+            return db.get_document_by_id(int(row["id"]))
+    return None
+
+
+def _refresh_document_text(doc: Any) -> tuple[str, bool]:
+    current = (doc["text"] or "").strip()
+    if len(current) >= 8:
+        return current, False
+    path_str = doc["path"] or ""
+    if not path_str:
+        return current, False
+    path = Path(path_str)
+    if not path.exists():
+        return current, False
+    try:
+        extracted = doc_ingest.extract_text(path).strip()
+    except Exception:
+        return current, False
+    if extracted and extracted != current:
+        db.update_document_text(int(doc["id"]), extracted)
+        return extracted, True
+    return current, False
+
+
+def _doc_context_from_mentions(
+    user_message: str, conversation_id: int
+) -> tuple[str, bool]:
+    names = _extract_doc_mentions(user_message)
+    if not names:
+        return "", False
+
+    updated = False
+    text_map = {
+        row["id"]: row["text"] for row in db.get_document_texts(conversation_id)
+    }
+    blocks: list[str] = []
+    for name in names:
+        doc = _resolve_document_by_name(conversation_id, name)
+        if not doc:
+            continue
+        text = (text_map.get(doc["id"]) or doc["text"] or "").strip()
+        if len(text) < 8:
+            refreshed, did_update = _refresh_document_text(doc)
+            updated = updated or did_update
+            text = refreshed
+        if text:
+            blocks.append(f"[{doc['name']}]\n{_clip_text(text, 1200)}")
+    return "\n\n".join(blocks).strip(), updated
+
+
+def _active_file_context(active_file: dict | None) -> str:
+    if not active_file:
+        return ""
+    name = str(active_file.get("name") or "").strip()
+    if not name:
+        return ""
+    doc_type = str(active_file.get("doc_type") or "").strip()
+    kind = str(active_file.get("kind") or "").strip()
+    label = doc_type or kind or "file"
+    return (
+        "Active file open in the UI: "
+        f"{name} ({label}). The user is working on this file; prioritize it if relevant."
+    )
 
 
 def _image_context(conversation_id: int, limit: int = 5) -> str:

@@ -37,7 +37,7 @@ class ToolSpec:
 
 
 OSASCRIPT_LOCK = threading.Lock()
-OSASCRIPT_TIMEOUT = 12
+OSASCRIPT_TIMEOUT = 25
 
 
 def _setting_enabled(key: str, default: bool = True) -> bool:
@@ -1078,7 +1078,11 @@ def _tool_calendar_find(args: dict[str, Any], settings: Settings, conversation_i
         "set targetCals to calendars whose name is calendarName",
         "end if",
         "repeat with cal in targetCals",
+        "if titleQuery is not \"\" then",
+        "set matches to every event of cal whose start date is greater than startDate and start date is less than endDate and summary contains titleQuery",
+        "else",
         "set matches to every event of cal whose start date is greater than startDate and start date is less than endDate",
+        "end if",
         "repeat with ev in matches",
         "set summaryText to summary of ev as string",
         "set shouldInclude to true",
@@ -1246,7 +1250,6 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
         f"set useCutoff to {str(use_cutoff).lower()}",
         f"set searchBody to {str(search_body).lower()}",
         f"set onlyInbox to {str(only_inbox).lower()}",
-        "set inboxNames to {\"INBOX\", \"Inbox\", \"Boite de reception\"}",
         "set epochBase to date \"Thursday, January 1, 1970 00:00:00\"",
     ]
     if use_cutoff:
@@ -1270,19 +1273,13 @@ def _tool_mail_search(args: dict[str, Any], settings: Settings, conversation_id:
             "set targetMailboxes to mailboxes of acc",
             "end if",
             "else if onlyInbox then",
-            "set targetMailboxes to {}",
-            "repeat with mbox in mailboxes of acc",
-            "set inboxMatch to false",
-            "try",
-            "if (special mailbox of mbox) is inbox then set inboxMatch to true",
-            "end try",
-            "if inboxMatch is false then",
-            "set mboxName to name of mbox as string",
-            "if inboxNames contains mboxName then set inboxMatch to true",
+            "set targetMailboxes to (mailboxes of acc whose name is \"Inbox\")",
+            "if (count of targetMailboxes) is 0 then",
+            "set targetMailboxes to (mailboxes of acc whose name is \"INBOX\")",
             "end if",
+            "if (count of targetMailboxes) is 0 then",
+            "set targetMailboxes to (mailboxes of acc whose name is \"Boite de reception\")",
             "end if",
-            "if inboxMatch then copy mbox to end of targetMailboxes",
-            "end repeat",
             "if (count of targetMailboxes) is 0 then",
             "set targetMailboxes to mailboxes of acc",
             "end if",
