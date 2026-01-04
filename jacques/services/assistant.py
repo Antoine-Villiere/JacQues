@@ -119,6 +119,7 @@ def respond(
         on_tool_event,
         should_cancel,
         _tool_budget(user_message, settings),
+        stream=False,
     )
     return reply or "No response generated."
 
@@ -204,6 +205,24 @@ def respond_streaming(
 
     def log_tool_event(content: str) -> None:
         db.add_message(conversation_id, "tool", content, branch_id=branch_id)
+
+    if settings.llm_streaming and tools:
+        reply = _run_tool_loop(
+            llm,
+            messages,
+            tools,
+            tool_map,
+            settings,
+            conversation_id,
+            log_tool_event,
+            on_tool_event,
+            should_cancel,
+            _tool_budget(user_message, settings),
+            stream=False,
+        )
+        if on_token and reply:
+            on_token(reply)
+        return reply or "No response generated."
 
     reply = _run_tool_loop_streaming(
         llm,
@@ -363,6 +382,102 @@ def _replace_system_prompt(messages: list[dict[str, Any]], prompt: str) -> list[
     return updated
 
 
+def _last_user_message(messages: list[dict[str, Any]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return str(message.get("content") or "")
+    return ""
+
+
+def _should_force_tools(messages: list[dict[str, Any]]) -> bool:
+    text = _last_user_message(messages).lower()
+    if not text:
+        return False
+    keywords = [
+        "plot",
+        "graph",
+        "chart",
+        "graphique",
+        "scatter",
+        "nuage",
+        "wordcloud",
+        "scrape",
+        "scraping",
+        "scraper",
+    ]
+    return any(keyword in text for keyword in keywords)
+
+
+def _tool_names_from_defs(tools: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for item in tools:
+        function = item.get("function") or {}
+        name = function.get("name")
+        if name:
+            names.append(str(name))
+    return names
+
+
+def _tool_plan_catalog(tools: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for item in tools:
+        function = item.get("function") or {}
+        name = str(function.get("name") or "").strip()
+        if not name:
+            continue
+        description = str(function.get("description") or "").strip()
+        parameters = function.get("parameters") or {}
+        props = parameters.get("properties") or {}
+        keys = ", ".join(sorted(props.keys())) if isinstance(props, dict) else ""
+        keys_text = keys if keys else "none"
+        required = parameters.get("required") or []
+        required_text = ", ".join(str(item) for item in required) if required else "none"
+        line = (
+            f"- {name}: {description} Params: {keys_text} Required: {required_text}"
+        )
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _build_tool_plan_prompt(tools: list[dict[str, Any]]) -> str:
+    catalog = _tool_plan_catalog(tools)
+    prompt = (
+        "Tool planning mode: you cannot call tools directly. "
+        "Return JSON only using one of these formats:\n"
+        "{\"tool_calls\":[{\"name\":\"tool_name\",\"arguments\":{...}}]}\n"
+        "{\"final\":\"...\"}\n"
+        "Rules: output valid JSON only, no markdown, no extra keys. "
+        "If tool_calls is needed, include valid arguments. "
+        "If no tools are needed, return final."
+    )
+    if catalog:
+        prompt = f"{prompt}\nAvailable tools:\n{catalog}"
+    return prompt
+
+
+def _parse_tool_plan(text: str) -> tuple[dict[str, Any] | None, str | None]:
+    raw = (text or "").strip()
+    if not raw:
+        return None, "Planner response is empty."
+    if raw.startswith("```"):
+        raw = re.sub(r"^```[a-zA-Z0-9]*\\n", "", raw)
+        if raw.endswith("```"):
+            raw = raw[:-3]
+        raw = raw.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None, "Planner response was not valid JSON."
+    snippet = raw[start : end + 1]
+    try:
+        data = json.loads(snippet)
+    except json.JSONDecodeError:
+        return None, "Planner response was not valid JSON."
+    if not isinstance(data, dict):
+        return None, "Planner response must be a JSON object."
+    return data, None
+
+
 def _run_tool_loop(
     llm: LLMClient,
     messages: list[dict[str, Any]],
@@ -374,6 +489,7 @@ def _run_tool_loop(
     on_tool_event: Callable[[str, str], None] | None = None,
     should_cancel: Callable[[], bool] | None = None,
     max_steps: int | None = None,
+    stream: bool | None = None,
 ) -> str:
     if should_cancel and should_cancel():
         return "Stopped by user."
@@ -382,7 +498,9 @@ def _run_tool_loop(
             safe_messages = _replace_system_prompt(
                 messages, _build_system_prompt(tool_names=[], tools_enabled=False)
             )
-            response = llm.chat(safe_messages, model=settings.reasoning_model)
+            response = llm.chat(
+                safe_messages, model=settings.reasoning_model, stream=stream
+            )
         except Exception as exc:
             if _is_tool_choice_error(exc):
                 return (
@@ -400,12 +518,28 @@ def _run_tool_loop(
     summary_prompted = False
     last_tool_calls: list[dict[str, Any]] | None = None
     last_content = ""
+    force_tool_attempted = False
     while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
         try:
-            response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
+            response = llm.chat(
+                messages, model=settings.reasoning_model, tools=tools, stream=stream
+            )
         except Exception as exc:
+            if _is_tool_choice_error(exc):
+                return _run_tool_plan_loop(
+                    llm,
+                    messages,
+                    tools,
+                    tool_map,
+                    settings,
+                    conversation_id,
+                    log_tool_event,
+                    on_tool_event,
+                    should_cancel,
+                    max_steps,
+                )
             if _is_tool_json_error(exc):
                 messages.append(
                     {
@@ -417,8 +551,26 @@ def _run_tool_loop(
                     }
                 )
                 try:
-                    response = llm.chat(messages, model=settings.reasoning_model, tools=tools)
+                    response = llm.chat(
+                        messages,
+                        model=settings.reasoning_model,
+                        tools=tools,
+                        stream=stream,
+                    )
                 except Exception as inner_exc:
+                    if _is_tool_choice_error(inner_exc):
+                        return _run_tool_plan_loop(
+                            llm,
+                            messages,
+                            tools,
+                            tool_map,
+                            settings,
+                            conversation_id,
+                            log_tool_event,
+                            on_tool_event,
+                            should_cancel,
+                            max_steps,
+                        )
                     if _is_tool_json_error(inner_exc):
                         if last_content:
                             return _append_tool_summary(
@@ -433,6 +585,18 @@ def _run_tool_loop(
         last_content = str(content).strip()
         if not tool_calls:
             final_content = str(content).strip()
+            if _should_force_tools(messages) and not force_tool_attempted:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "You must use tools to complete this request. "
+                            "Return tool calls only."
+                        ),
+                    }
+                )
+                force_tool_attempted = True
+                continue
             return _append_tool_summary(final_content, tool_summaries, latest_sources)
 
         if last_tool_calls is not None and tool_calls == last_tool_calls:
@@ -496,6 +660,150 @@ def _run_tool_loop(
     return "Tool budget reached. Please rephrase or add constraints."
 
 
+def _run_tool_plan_loop(
+    llm: LLMClient,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    tool_map: dict[str, Any],
+    settings: Settings,
+    conversation_id: int,
+    log_tool_event: Callable[[str], None] | None = None,
+    on_tool_event: Callable[[str, str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+    max_steps: int | None = None,
+) -> str:
+    if should_cancel and should_cancel():
+        return "Stopped by user."
+    if not tools:
+        safe_messages = _replace_system_prompt(
+            messages, _build_system_prompt(tool_names=[], tools_enabled=False)
+        )
+        response = llm.chat(safe_messages, model=settings.reasoning_model, stream=False)
+        return str(response.get("content") or "").strip()
+
+    steps = 0
+    step_budget = max_steps if isinstance(max_steps, int) and max_steps > 0 else settings.max_tool_calls
+    used_tools = False
+    latest_sources: str | None = None
+    tool_summaries: list[tuple[str, str]] = []
+    summary_prompted = False
+    last_tool_calls: list[dict[str, Any]] | None = None
+    invalid_count = 0
+    tool_names = _tool_names_from_defs(tools)
+    plan_prompt = _build_tool_plan_prompt(tools)
+    force_tool_attempted = False
+
+    while steps < step_budget:
+        if should_cancel and should_cancel():
+            return "Stopped by user."
+
+        planner_messages = _replace_system_prompt(
+            messages, f"{_build_system_prompt(tool_names)}\n\n{plan_prompt}"
+        )
+        response = llm.chat(planner_messages, model=settings.reasoning_model, stream=False)
+        plan, error = _parse_tool_plan(str(response.get("content") or ""))
+        if error:
+            invalid_count += 1
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "Return valid JSON only with tool_calls or final.",
+                }
+            )
+            if invalid_count >= 2:
+                return "Tool planning failed. Please try again."
+            continue
+
+        invalid_count = 0
+        final_text = str(plan.get("final") or "").strip()
+        if final_text:
+            if _should_force_tools(messages) and not force_tool_attempted:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": "Return tool_calls in JSON for this request.",
+                    }
+                )
+                force_tool_attempted = True
+                continue
+            return _append_tool_summary(final_text, tool_summaries, latest_sources)
+
+        tool_calls = plan.get("tool_calls")
+        if not isinstance(tool_calls, list) or not tool_calls:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "Provide tool_calls or final in the JSON response.",
+                }
+            )
+            steps += 1
+            continue
+
+        if last_tool_calls is not None and tool_calls == last_tool_calls:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "Tool calls are repeating. Return final.",
+                }
+            )
+            steps += 1
+            continue
+
+        used_tools = True
+        last_tool_calls = tool_calls
+        for call in tool_calls:
+            if should_cancel and should_cancel():
+                return "Stopped by user."
+            if not isinstance(call, dict):
+                continue
+            name = str(call.get("name") or "").strip()
+            args = call.get("arguments") or {}
+            if log_tool_event:
+                log_tool_event(_format_tool_call(name, args))
+            if on_tool_event and name:
+                on_tool_event(name, "call")
+            result = execute_tool(name, args, tool_map, settings, conversation_id)
+            if log_tool_event:
+                log_tool_event(_format_tool_result(name, result))
+            if on_tool_event and name:
+                on_tool_event(name, "result")
+            if name in {"web_search", "news_search"} and result.strip().lower().startswith("sources:"):
+                latest_sources = result
+            if name:
+                tool_summaries.append((name, result))
+            messages.append(
+                {
+                    "role": "system",
+                    "content": f"Tool {name} result:\n{result}",
+                }
+            )
+        if used_tools and not summary_prompted:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "If you have enough information, return final in JSON.",
+                }
+            )
+            summary_prompted = True
+        steps += 1
+
+    messages.append(
+        {
+            "role": "system",
+            "content": "Tool budget reached. Return final in JSON now.",
+        }
+    )
+    response = llm.chat(
+        _replace_system_prompt(
+            messages, f"{_build_system_prompt(tool_names)}\n\n{plan_prompt}"
+        ),
+        model=settings.reasoning_model,
+        stream=False,
+    )
+    final_fallback = str(response.get("content") or "").strip()
+    return _append_tool_summary(final_fallback, tool_summaries, latest_sources)
+
+
 def _run_tool_loop_streaming(
     llm: LLMClient,
     messages: list[dict[str, Any]],
@@ -528,13 +836,21 @@ def _run_tool_loop_streaming(
                 content = "".join(state["content_parts"]).strip()
                 tool_calls = _ordered_tool_calls(state["tool_calls"])
                 return content, tool_calls, bool(state.get("cancelled"))
-            response = llm.chat(active_messages, model=model, tools=toolset, stream=False)
+            response = llm.chat(
+                active_messages, model=model, tools=toolset, stream=False
+            )
             return (
                 str(response.get("content") or "").strip(),
                 response.get("tool_calls") or [],
                 False,
             )
         except Exception as exc:
+            if toolset and _is_tool_choice_error(exc):
+                safe_messages = _replace_system_prompt(
+                    active_messages, _build_system_prompt(tool_names=[], tools_enabled=False)
+                )
+                response = llm.chat(safe_messages, model=model, tools=None, stream=False)
+                return (str(response.get("content") or "").strip(), [], False)
             if toolset and _is_tool_json_error(exc):
                 retry_messages = list(active_messages) + [
                     {
@@ -971,6 +1287,9 @@ def _tool_guidance(tool_names: Iterable[str]) -> list[str]:
     if "python_run" in names or "python" in names:
         lines.append(
             "Use python_run (or python) for quick local scripts (calculations, time, file generation)."
+        )
+        lines.append(
+            "For images, save to JACQUES_GENERATED_DIR and the image will be attached automatically; avoid base64 data URIs."
         )
     if "excel_read_sheet" in names:
         lines.append(

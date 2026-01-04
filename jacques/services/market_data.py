@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 import csv
 import io
@@ -14,6 +14,25 @@ import requests
 _DATE_RE = re.compile(r"^\\d{4}-\\d{2}-\\d{2}$")
 _YEAR_RE = re.compile(r"^\\d{4}$")
 _YEAR_MONTH_RE = re.compile(r"^(\\d{4})-(\\d{1,2})$")
+_RELATIVE_RE = re.compile(r"^(\\d+)\\s*(day|days|month|months|year|years|jour|jours|mois|an|ans|annee|annees)$")
+
+_RELATIVE_TOKENS = {
+    "last",
+    "past",
+    "ago",
+    "il y a",
+    "dernier",
+    "derniers",
+    "derniere",
+    "dernieres",
+}
+
+_TODAY_WORDS = {
+    "today",
+    "now",
+    "aujourdhui",
+    "aujourd'hui",
+}
 
 _MONTHS = {
     "january": 1,
@@ -196,6 +215,13 @@ def _normalize_date(value: str | None, end: bool) -> str:
     if not value:
         raise ValueError("date is required")
     raw = value.strip()
+    if raw:
+        lowered = raw.lower()
+        if lowered in _TODAY_WORDS:
+            return date.today().isoformat()
+        relative = _parse_relative_date(lowered)
+        if relative:
+            return relative
     if _DATE_RE.match(raw):
         return raw
     match = _YEAR_MONTH_RE.match(raw)
@@ -233,6 +259,41 @@ def _normalize_date(value: str | None, end: bool) -> str:
         day = _month_last_day(year, month) if end else 1
 
     return _format_date(year, month, day)
+
+
+def _parse_relative_date(text: str) -> str | None:
+    cleaned = text.strip().lower()
+    if not cleaned:
+        return None
+    for token in _RELATIVE_TOKENS:
+        cleaned = cleaned.replace(token, " ")
+    cleaned = " ".join(cleaned.split())
+    match = _RELATIVE_RE.match(cleaned)
+    if not match:
+        return None
+    count = int(match.group(1))
+    if count <= 0:
+        return None
+    unit = match.group(2)
+    today = date.today()
+    if unit in {"day", "days", "jour", "jours"}:
+        return (today - timedelta(days=count)).isoformat()
+    if unit in {"month", "months", "mois"}:
+        return _shift_months(today, -count).isoformat()
+    if unit in {"year", "years", "an", "ans", "annee", "annees"}:
+        year = today.year - count
+        month = today.month
+        day = min(today.day, _month_last_day(year, month))
+        return date(year, month, day).isoformat()
+    return None
+
+
+def _shift_months(current: date, delta: int) -> date:
+    month_index = current.month - 1 + delta
+    year = current.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(current.day, _month_last_day(year, month))
+    return date(year, month, day)
 
 
 def _normalize_text(text: str) -> str:

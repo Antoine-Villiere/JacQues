@@ -8,7 +8,7 @@ import hashlib
 import os
 import re
 import time
-from urllib.parse import quote, urlencode
+from urllib.parse import quote, urlencode, urlparse
 import sqlite3
 import threading
 import warnings
@@ -64,6 +64,8 @@ MAILTO_RECENT_SECONDS = 300
 CALENDAR_SEEN: dict[int, int] = {}
 CALENDAR_LOCK = threading.Lock()
 CALENDAR_RECENT_SECONDS = 300
+PYTHON_INSTALL_SEEN: dict[int, int] = {}
+PYTHON_INSTALL_LOCK = threading.Lock()
 SCHEDULER_STARTED = False
 SCHEDULER_LOCK = threading.Lock()
 INITIAL_SYSTEM_PROMPT = db.get_setting("system_prompt") or assistant.SYSTEM_PROMPT
@@ -183,6 +185,28 @@ def _extract_tool_result_text(content: str) -> str:
     return parts[1].strip() if len(parts) > 1 else content.strip()
 
 
+def _extract_missing_python_module(content: str) -> str | None:
+    if not content:
+        return None
+    match = re.search(
+        r"No module named ['\"]?([A-Za-z0-9_.-]+)['\"]?", content
+    )
+    if not match:
+        return None
+    return match.group(1)
+
+
+def _sanitize_python_package(name: str | None) -> str | None:
+    if not name:
+        return None
+    cleaned = name.strip()
+    if not cleaned:
+        return None
+    if not re.match(r"^[A-Za-z0-9_.-]+$", cleaned):
+        return None
+    return cleaned
+
+
 def _normalize_list(value):
     if value is None:
         return []
@@ -235,6 +259,15 @@ def _should_open_calendar(conversation_id: int, message_id: int) -> bool:
         if last_seen == message_id:
             return False
         CALENDAR_SEEN[conversation_id] = message_id
+        return True
+
+
+def _should_prompt_python_install(conversation_id: int, message_id: int) -> bool:
+    with PYTHON_INSTALL_LOCK:
+        last_seen = PYTHON_INSTALL_SEEN.get(conversation_id)
+        if last_seen == message_id:
+            return False
+        PYTHON_INSTALL_SEEN[conversation_id] = message_id
         return True
 
 
@@ -686,12 +719,17 @@ def _absolute_file_url(path: str, base_url: str | None = None) -> str:
     return f"{base}{relative}"
 
 
-def _effective_onlyoffice_base_url() -> str:
-    base = (settings.app_base_url or "").strip() or "http://127.0.0.1:8050"
+def _effective_onlyoffice_base_url(request_url: str | None = None) -> str:
+    base = (settings.app_base_url or "").strip()
+    base_from_settings = bool(base)
+    if not base:
+        base = (request_url or "").strip()
+    if not base:
+        base = "http://127.0.0.1:8050"
     onlyoffice = (settings.onlyoffice_url or "").strip()
     if onlyoffice and ("localhost" in onlyoffice or "127.0.0.1" in onlyoffice):
-        if "localhost" in base or "127.0.0.1" in base:
-            base = _default_docker_base_url()
+        if ("localhost" in base or "127.0.0.1" in base) and not base_from_settings:
+            base = _default_docker_base_url(base)
     return base.rstrip("/")
 
 
@@ -710,6 +748,33 @@ def _run_command(args: list[str]) -> tuple[bool, str]:
     if result.returncode != 0:
         return False, err or output or "Command failed."
     return True, output or "OK"
+
+
+def _install_python_package(package: str) -> tuple[bool, str]:
+    cmd = [sys.executable, "-m", "pip", "install", package]
+    try:
+        result = subprocess.run(
+            cmd,
+            check=False,
+            capture_output=True,
+            text=True,
+            cwd=str(BASE_DIR),
+            timeout=180,
+        )
+    except Exception as exc:
+        return False, f"Install failed: {exc}"
+    output = (result.stdout or "").strip()
+    err = (result.stderr or "").strip()
+    combined = output
+    if err:
+        combined = f"{combined}\n\nstderr:\n{err}".strip() if combined else f"stderr:\n{err}"
+    if not combined:
+        combined = "(no output)"
+    if len(combined) > 2000:
+        combined = combined[:2000].rsplit(" ", 1)[0] + "..."
+    if result.returncode != 0:
+        return False, f"Install failed.\n\n{combined}"
+    return True, f"Installed {package}.\n\n{combined}"
 
 
 def _start_onlyoffice_container(jwt_secret: str) -> tuple[bool, str]:
@@ -752,10 +817,20 @@ def _start_docker_desktop() -> tuple[bool, str]:
     return False, "Cannot launch Docker Desktop on this OS."
 
 
-def _default_docker_base_url() -> str:
+def _default_docker_base_url(base_url: str | None = None) -> str:
     if sys.platform.startswith("darwin") or sys.platform.startswith("win"):
-        return "http://host.docker.internal:8050"
-    return "http://172.17.0.1:8050"
+        host = "host.docker.internal"
+    else:
+        host = "172.17.0.1"
+    if base_url:
+        candidate = base_url.strip()
+        if "://" not in candidate:
+            candidate = f"http://{candidate}"
+        parsed = urlparse(candidate)
+        scheme = parsed.scheme or "http"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{scheme}://{host}{port}"
+    return f"http://{host}:8050"
 
 
 def _format_word_preview(path: Path) -> str:
@@ -894,7 +969,7 @@ def onlyoffice_editor(doc_id: int):
     if not path.exists():
         abort(404)
 
-    base_url = _effective_onlyoffice_base_url()
+    base_url = _effective_onlyoffice_base_url(request.host_url)
     file_url = _absolute_file_url(doc["path"], base_url)
     if not file_url:
         abort(404)
@@ -1073,6 +1148,7 @@ app.layout = html.Div(
         dcc.Store(id="mailto-state", data={}),
         dcc.Store(id="calendar-data", data={}),
         dcc.Store(id="calendar-state", data={}),
+        dcc.Store(id="python-install-state", data={"open": False, "package": "", "message_id": None}),
         dcc.Store(id="archived-refresh", data=0),
         dcc.Store(id="tasks-refresh", data=0),
         dcc.Store(id="docs-list", data=[]),
@@ -1800,6 +1876,60 @@ app.layout = html.Div(
                                                     ],
                                                 )
                                             ],
+                                        ),
+                                    ],
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        ),
+        html.Div(
+            id="python-install-modal",
+            className="modal",
+            children=[
+                html.Div(id="python-install-backdrop", className="modal-backdrop"),
+                html.Div(
+                    className="modal-card modal-card--small",
+                    children=[
+                        html.Div(
+                            className="modal-header",
+                            children=[
+                                html.Div(
+                                    "Installer un module Python",
+                                    className="modal-title",
+                                ),
+                                html.Button(
+                                    "X",
+                                    id="close-python-install-btn",
+                                    className="icon-btn",
+                                ),
+                            ],
+                        ),
+                        html.Div(
+                            className="modal-body",
+                            children=[
+                                html.Div(
+                                    id="python-install-body",
+                                    className="python-install-body",
+                                ),
+                                html.Div(
+                                    id="python-install-status",
+                                    className="status",
+                                ),
+                                html.Div(
+                                    className="python-install-actions",
+                                    children=[
+                                        html.Button(
+                                            "Installer",
+                                            id="python-install-confirm",
+                                            className="settings-btn",
+                                        ),
+                                        html.Button(
+                                            "Annuler",
+                                            id="python-install-cancel",
+                                            className="settings-btn secondary",
                                         ),
                                     ],
                                 ),
@@ -3136,18 +3266,17 @@ def save_onlyoffice_settings(
         if not jwt_secret:
             jwt_secret = secrets.token_urlsafe(24)
         if not base_url:
-            base_url = _default_docker_base_url()
-        if (
-            ("localhost" in url or "127.0.0.1" in url)
-            and ("localhost" in base_url or "127.0.0.1" in base_url)
-        ):
-            base_url = _default_docker_base_url()
+            base_url = (request.host_url or "").rstrip("/")
+        base_url = _default_docker_base_url(base_url)
         ok, message = _start_onlyoffice_container(jwt_secret)
         status = message if ok else f"OnlyOffice start failed: {message}"
     elif trigger == "save-onlyoffice-btn":
         status = "OnlyOffice settings saved." if url else "OnlyOffice disabled."
     else:
         return no_update, no_update, no_update, no_update
+
+    if url and not base_url:
+        base_url = (request.host_url or "").rstrip("/")
 
     db.set_setting("onlyoffice_url", url)
     db.set_setting("onlyoffice_jwt", jwt_secret)
@@ -3587,6 +3716,7 @@ def refresh_tool_status(refresh_value: int, n_intervals: int, convo_id: str | No
         return ""
     conversation_id = int(convo_id)
     branch_id = db.get_conversation_active_branch(conversation_id)
+    is_streaming = _is_streaming(conversation_id)
     state = _get_tool_status(conversation_id) or {}
     tool_name = state.get("name") or _latest_tool_name(
         conversation_id, branch_id=branch_id
@@ -3597,12 +3727,17 @@ def refresh_tool_status(refresh_value: int, n_intervals: int, convo_id: str | No
         if stage == "call":
             text = f"Tool running: {tool_name}"
             loader_class = "tool-loader"
+        elif is_streaming:
+            text = "Generating response..."
+            loader_class = "tool-loader"
         else:
             text = f"Last tool: {tool_name}"
             loader_class = "tool-loader tool-loader--idle"
+    elif is_streaming:
+        text = "Generating response..."
+        loader_class = "tool-loader"
     else:
-        text = ""
-        loader_class = "tool-loader tool-loader--idle"
+        return ""
     return html.Div(
         [
             html.Span(text, className="tool-status-text"),
@@ -3827,6 +3962,91 @@ def render_calendar_status(refresh_value: int, convo_id: str | None):
         ],
         className="calendar-status-row",
     )
+
+
+@app.callback(
+    Output("python-install-modal", "className"),
+    Output("python-install-body", "children"),
+    Input("python-install-state", "data"),
+)
+def render_python_install_modal(state: dict | None):
+    if not isinstance(state, dict) or not state.get("open"):
+        return "modal", ""
+    package = str(state.get("package") or "").strip()
+    if package:
+        body = html.Div(
+            [
+                html.Div("Module manquant detecte:"),
+                html.Div(html.Strong(package)),
+                html.Div("Voulez-vous l'installer maintenant ?"),
+            ]
+        )
+    else:
+        body = "Module Python manquant. Voulez-vous l'installer maintenant ?"
+    return "modal modal--open", body
+
+
+@app.callback(
+    Output("python-install-state", "data"),
+    Output("python-install-status", "children"),
+    Input("chat-refresh", "data"),
+    Input("stream-interval", "n_intervals"),
+    Input("convo-dropdown", "value"),
+    Input("python-install-confirm", "n_clicks"),
+    Input("python-install-cancel", "n_clicks"),
+    Input("close-python-install-btn", "n_clicks"),
+    State("python-install-state", "data"),
+    prevent_initial_call=True,
+)
+def manage_python_install_state(
+    refresh_value: int,
+    n_intervals: int,
+    convo_id: str | None,
+    confirm_clicks: int | None,
+    cancel_clicks: int | None,
+    close_clicks: int | None,
+    state: dict | None,
+):
+    trigger = dash.callback_context.triggered_id
+    current = state or {"open": False, "package": "", "message_id": None}
+
+    if trigger in {"python-install-cancel", "close-python-install-btn"}:
+        current["open"] = False
+        return current, ""
+
+    if trigger == "python-install-confirm":
+        package = _sanitize_python_package(current.get("package"))
+        if not package:
+            current["open"] = False
+            return current, "Invalid package name."
+        ok, message = _install_python_package(package)
+        if ok:
+            current["open"] = False
+        return current, message
+
+    if current.get("open"):
+        return current, no_update
+
+    if not convo_id:
+        return current, no_update
+    conversation_id = int(convo_id)
+    branch_id = db.get_conversation_active_branch(conversation_id)
+    row = db.get_latest_tool_message_by_name(
+        conversation_id, "python_run", branch_id=branch_id
+    )
+    if not row:
+        row = db.get_latest_tool_message_by_name(
+            conversation_id, "python", branch_id=branch_id
+        )
+    if not row:
+        return current, no_update
+    payload = _extract_tool_result_text(row["content"] or "")
+    module = _sanitize_python_package(_extract_missing_python_module(payload))
+    if not module:
+        return current, no_update
+    if not _should_prompt_python_install(conversation_id, int(row["id"])):
+        return current, no_update
+    return {"open": True, "package": module, "message_id": int(row["id"])}, ""
 
 
 @app.callback(

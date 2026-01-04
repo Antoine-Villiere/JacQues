@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
 import csv
 import json
+import os
+import time
 from datetime import datetime, timezone, timedelta, date
 from urllib.parse import urlencode, quote
 from dataclasses import dataclass
@@ -13,7 +16,7 @@ from uuid import uuid4
 import subprocess
 import sys
 
-from ..config import BASE_DIR, EXPORTS_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
+from ..config import BASE_DIR, DATA_DIR, EXPORTS_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
 from ..utils import safe_filename
 from .. import db
 from . import (
@@ -39,6 +42,7 @@ class ToolSpec:
 
 OSASCRIPT_LOCK = threading.Lock()
 OSASCRIPT_TIMEOUT = 25
+_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def _setting_enabled(key: str, default: bool = True) -> bool:
@@ -700,6 +704,73 @@ def _tool_definition(tool: ToolSpec) -> dict[str, Any]:
         "description": tool.description,
         "parameters": tool.parameters,
     }
+
+
+def _snapshot_images(directory: Path) -> dict[str, float]:
+    snapshots: dict[str, float] = {}
+    if not directory.exists():
+        return snapshots
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        try:
+            snapshots[path.name] = path.stat().st_mtime
+        except Exception:
+            continue
+    return snapshots
+
+
+def _detect_new_images(
+    directory: Path, before: dict[str, float], start_time: float
+) -> list[Path]:
+    if not directory.exists():
+        return []
+    found: list[Path] = []
+    for path in directory.iterdir():
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in _IMAGE_EXTENSIONS:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except Exception:
+            continue
+        if path.name not in before or mtime >= start_time - 1:
+            found.append(path)
+    found.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0)
+    return found
+
+
+def _extract_data_uri_image(text: str) -> tuple[str, bytes, str] | None:
+    if not text:
+        return None
+    marker = "data:image/"
+    idx = text.find(marker)
+    if idx < 0:
+        return None
+    tail = text[idx:]
+    end = len(tail)
+    for sep in (" ", "\n", "\r", "\t", ")", "\"", "'"):
+        pos = tail.find(sep)
+        if pos != -1:
+            end = min(end, pos)
+    uri = tail[:end].strip()
+    if ";base64," not in uri:
+        return None
+    header, b64data = uri.split(",", 1)
+    if not header.lower().startswith("data:image/"):
+        return None
+    mime = header.split(";", 1)[0].split("/", 1)[1].lower()
+    cleaned = "".join(b64data.split())
+    if not cleaned:
+        return None
+    try:
+        payload = base64.b64decode(cleaned, validate=False)
+    except Exception:
+        return None
+    return mime, payload, uri
 
 
 def _tool_list_documents(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
@@ -1693,6 +1764,17 @@ def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: 
     extra_args = [str(item) for item in extra_args if str(item).strip()]
     stdin_text = str(args.get("stdin") or "")
 
+    generated_dir = GENERATED_DIR
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    before_images = _snapshot_images(generated_dir)
+    start_time = time.time()
+
+    env = os.environ.copy()
+    env["JACQUES_DATA_DIR"] = str(DATA_DIR)
+    env["JACQUES_GENERATED_DIR"] = str(GENERATED_DIR)
+    env["JACQUES_EXPORTS_DIR"] = str(EXPORTS_DIR)
+    env["JACQUES_UPLOADS_DIR"] = str(UPLOADS_DIR)
+
     if code:
         cmd = [sys.executable, "-c", code]
     else:
@@ -1715,6 +1797,7 @@ def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: 
             text=True,
             cwd=str(BASE_DIR),
             timeout=timeout_value,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return f"Python run timed out after {timeout_value}s."
@@ -1726,10 +1809,43 @@ def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: 
     combined = output
     if err:
         combined = f"{combined}\n\nstderr:\n{err}".strip() if combined else f"stderr:\n{err}"
+
+    extracted = _extract_data_uri_image(combined)
+    if extracted:
+        mime, payload, uri = extracted
+        ext = "png" if mime == "png" else "jpg" if mime in {"jpg", "jpeg"} else "webp"
+        filename = (
+            f"python_image_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.{ext}"
+        )
+        path = GENERATED_DIR / filename
+        try:
+            path.write_bytes(payload)
+            combined = combined.replace(uri, f"[image saved: {filename}]")
+        except Exception:
+            pass
+
     if not combined:
         combined = "(no output)"
     if len(combined) > 6000:
         combined = combined[:6000].rsplit(" ", 1)[0] + "..."
+
+    new_images = _detect_new_images(generated_dir, before_images, start_time)
+    image_blocks: list[str] = []
+    for path in new_images:
+        filename = path.name
+        try:
+            db.add_image(
+                conversation_id,
+                filename,
+                str(path),
+                "Generated by python",
+            )
+        except Exception:
+            pass
+        url = f"/files/generated/{filename}"
+        image_blocks.append(f"![{filename}]({url})")
+    if image_blocks:
+        combined = f"{combined}\n\n" + "\n".join(image_blocks)
 
     status = "ok" if result.returncode == 0 else f"exit {result.returncode}"
     return f"Python run {status}.\n\n{combined}"
