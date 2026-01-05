@@ -16,7 +16,15 @@ from uuid import uuid4
 import subprocess
 import sys
 
-from ..config import BASE_DIR, DATA_DIR, EXPORTS_DIR, GENERATED_DIR, Settings, UPLOADS_DIR
+from ..config import (
+    BASE_DIR,
+    DATA_DIR,
+    EXPORTS_DIR,
+    GENERATED_DIR,
+    RAG_INDEX_DIR,
+    Settings,
+    UPLOADS_DIR,
+)
 from ..utils import safe_filename
 from .. import db
 from . import (
@@ -41,7 +49,7 @@ class ToolSpec:
 
 
 OSASCRIPT_LOCK = threading.Lock()
-OSASCRIPT_TIMEOUT = 25
+OSASCRIPT_TIMEOUT = 60
 _IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -121,6 +129,22 @@ def build_tools(
                         },
                     },
                     handler=_tool_email_draft,
+                ),
+                ToolSpec(
+                    name="mail_reply",
+                    description="Reply to an existing Apple Mail message.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "mail_id": {"type": "integer"},
+                            "message_id": {"type": "string"},
+                            "account": {"type": "string"},
+                            "mailbox": {"type": "string"},
+                            "body": {"type": "string"},
+                        },
+                        "required": ["body"],
+                    },
+                    handler=_tool_mail_reply,
                 ),
                 ToolSpec(
                     name="mail_search",
@@ -741,6 +765,59 @@ def _detect_new_images(
             found.append(path)
     found.sort(key=lambda p: p.stat().st_mtime if p.exists() else 0)
     return found
+
+
+def _iter_data_files(root: Path) -> list[Path]:
+    if not root.exists():
+        return []
+    files: list[Path] = []
+    skip_dirs = {RAG_INDEX_DIR}
+    for current, dirnames, filenames in os.walk(root):
+        current_path = Path(current)
+        if any(current_path == skip or skip in current_path.parents for skip in skip_dirs):
+            dirnames[:] = []
+            continue
+        for name in filenames:
+            files.append(current_path / name)
+    return files
+
+
+def _snapshot_files(root: Path) -> dict[Path, float]:
+    snapshots: dict[Path, float] = {}
+    for path in _iter_data_files(root):
+        if not path.is_file():
+            continue
+        try:
+            snapshots[path] = path.stat().st_mtime
+        except Exception:
+            continue
+    return snapshots
+
+
+def _detect_new_files(
+    root: Path, before: dict[Path, float], start_time: float
+) -> list[Path]:
+    found: list[Path] = []
+    for path in _iter_data_files(root):
+        if not path.is_file():
+            continue
+        if path not in before:
+            found.append(path)
+            continue
+    return found
+
+
+def _should_skip_generated_file(path: Path) -> bool:
+    name = path.name
+    if not name:
+        return True
+    if name in {".DS_Store"}:
+        return True
+    if name.startswith("jacques.db"):
+        return True
+    if name.endswith(".db") or name.endswith(".db-wal") or name.endswith(".db-shm"):
+        return True
+    return False
 
 
 def _extract_data_uri_image(text: str) -> tuple[str, bytes, str] | None:
@@ -1606,6 +1683,74 @@ def _tool_mail_read(args: dict[str, Any], settings: Settings, conversation_id: i
     )
 
 
+def _tool_mail_reply(args: dict[str, Any], settings: Settings, conversation_id: int) -> str:
+    if sys.platform != "darwin":
+        return "Apple Mail reply requires macOS."
+    mail_id = args.get("mail_id")
+    message_id = str(args.get("message_id") or "").strip()
+    account = str(args.get("account") or "").strip()
+    mailbox = str(args.get("mailbox") or "").strip()
+    body = str(args.get("body") or "").strip()
+    if not account:
+        account = str(db.get_setting("default_mail_account") or "").strip()
+    if not mailbox:
+        mailbox = str(db.get_setting("default_mailbox") or "").strip()
+    if not isinstance(mail_id, int) and not message_id:
+        return "Provide mail_id or message_id."
+
+    subject_text = _osascript_literal("")
+    body_text = _osascript_text_block(body or "")
+    script_lines = [
+        f"set mailId to {_osascript_literal(str(mail_id) if isinstance(mail_id, int) else '')}",
+        f"set messageId to {_osascript_literal(message_id)}",
+        f"set accountName to {_osascript_literal(account)}",
+        f"set mailboxName to {_osascript_literal(mailbox)}",
+        f"set messageContent to {body_text}",
+        "set foundMessage to missing value",
+        'tell application "Mail"',
+        "set targetAccounts to every account",
+        "if accountName is not \"\" then",
+        "set targetAccounts to (every account whose name is accountName)",
+        "if (count of targetAccounts) is 0 then",
+        "set targetAccounts to every account",
+        "end if",
+        "end if",
+        "repeat with acc in targetAccounts",
+        "set targetMailboxes to mailboxes of acc",
+        "if mailboxName is not \"\" then",
+        "set targetMailboxes to (mailboxes of acc whose name is mailboxName)",
+        "if (count of targetMailboxes) is 0 then",
+        "set targetMailboxes to mailboxes of acc",
+        "end if",
+        "end if",
+        "repeat with mbox in targetMailboxes",
+        "if foundMessage is not missing value then exit repeat",
+        "try",
+        "if mailId is not \"\" then",
+        "set foundMessage to first message of mbox whose id is (mailId as number)",
+        "else if messageId is not \"\" then",
+        "set foundMessage to first message of mbox whose message id is messageId",
+        "end if",
+        "end try",
+        "end repeat",
+        "end repeat",
+        "if foundMessage is missing value then return \"\"",
+        "set replyMessage to reply foundMessage with opening window",
+        "if messageContent is not \"\" then",
+        "set content of replyMessage to messageContent & return & return & content of replyMessage",
+        "end if",
+        "activate",
+        "return \"OK\"",
+        "end tell",
+    ]
+    ok, output = _run_osascript(script_lines)
+    if not ok:
+        return f"Apple Mail reply failed: {output}"
+    if not output:
+        return "Email not found."
+    return "Apple Mail reply draft created."
+
+
 def _resolve_project_path(path_value: str | None) -> Path:
     root = BASE_DIR.resolve()
     candidate = (root / (path_value or "")).resolve()
@@ -1767,6 +1912,7 @@ def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: 
     generated_dir = GENERATED_DIR
     generated_dir.mkdir(parents=True, exist_ok=True)
     before_images = _snapshot_images(generated_dir)
+    before_files = _snapshot_files(DATA_DIR)
     start_time = time.time()
 
     env = os.environ.copy()
@@ -1846,6 +1992,33 @@ def _tool_python_run(args: dict[str, Any], settings: Settings, conversation_id: 
         image_blocks.append(f"![{filename}]({url})")
     if image_blocks:
         combined = f"{combined}\n\n" + "\n".join(image_blocks)
+
+    new_files = _detect_new_files(DATA_DIR, before_files, start_time)
+    generated_files: list[Path] = []
+    for path in new_files:
+        if _should_skip_generated_file(path):
+            continue
+        if GENERATED_DIR in path.parents or path.parent == GENERATED_DIR:
+            generated_files.append(path)
+            continue
+        target_name = safe_filename(path.name) or path.name
+        target_path = GENERATED_DIR / target_name
+        if target_path.exists():
+            stem = target_path.stem
+            target_path = GENERATED_DIR / (
+                f"{stem}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}{target_path.suffix}"
+            )
+        try:
+            path.replace(target_path)
+            generated_files.append(target_path)
+        except Exception:
+            continue
+
+    if generated_files:
+        lines = ["Generated files:"]
+        for path in generated_files:
+            lines.append(f"- {path.resolve()}")
+        combined = f"{combined}\n\n" + "\n".join(lines)
 
     status = "ok" if result.returncode == 0 else f"exit {result.returncode}"
     return f"Python run {status}.\n\n{combined}"

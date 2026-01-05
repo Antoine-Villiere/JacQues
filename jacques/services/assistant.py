@@ -20,6 +20,7 @@ SYSTEM_PROMPT = (
     "You manage multiple conversations with memory and answer questions. "
     "If the user mentions @\"filename\" or @filename, treat it as a direct reference to that document. "
     "If details are missing, ask a brief follow-up question. "
+    "If a request could target multiple apps (e.g., creating a note), ask which app to use before acting. "
     "When tools are used, summarize what was done and the result. "
     "If the user asks multiple tasks in one message, handle every item. "
     "Never include tool call logs or a 'Tools used' section in the response. "
@@ -108,19 +109,33 @@ def respond(
     def log_tool_event(content: str) -> None:
         db.add_message(conversation_id, "tool", content, branch_id=branch_id)
 
-    reply = _run_tool_loop(
-        llm,
-        messages,
-        tools,
-        tool_map,
-        settings,
-        conversation_id,
-        log_tool_event,
-        on_tool_event,
-        should_cancel,
-        _tool_budget(user_message, settings),
-        stream=False,
-    )
+    if tools and _needs_tool_planner(messages):
+        reply = _run_tool_plan_loop(
+            llm,
+            messages,
+            tools,
+            tool_map,
+            settings,
+            conversation_id,
+            log_tool_event,
+            on_tool_event,
+            should_cancel,
+            _tool_budget(user_message, settings),
+        )
+    else:
+        reply = _run_tool_loop(
+            llm,
+            messages,
+            tools,
+            tool_map,
+            settings,
+            conversation_id,
+            log_tool_event,
+            on_tool_event,
+            should_cancel,
+            _tool_budget(user_message, settings),
+            stream=False,
+        )
     return reply or "No response generated."
 
 
@@ -205,6 +220,23 @@ def respond_streaming(
 
     def log_tool_event(content: str) -> None:
         db.add_message(conversation_id, "tool", content, branch_id=branch_id)
+
+    if tools and _needs_tool_planner(messages):
+        reply = _run_tool_plan_loop(
+            llm,
+            messages,
+            tools,
+            tool_map,
+            settings,
+            conversation_id,
+            log_tool_event,
+            on_tool_event,
+            should_cancel,
+            _tool_budget(user_message, settings),
+        )
+        if on_token and reply:
+            on_token(reply)
+        return reply or "No response generated."
 
     if settings.llm_streaming and tools:
         reply = _run_tool_loop(
@@ -404,8 +436,59 @@ def _should_force_tools(messages: list[dict[str, Any]]) -> bool:
         "scrape",
         "scraping",
         "scraper",
+        "excel",
+        "xlsx",
+        "csv",
+        "export",
+        "file",
+        "fichier",
+        "tableau",
     ]
     return any(keyword in text for keyword in keywords)
+
+
+def _is_reply_request(messages: list[dict[str, Any]]) -> bool:
+    text = _last_user_message(messages).lower()
+    if not text:
+        return False
+    patterns = [
+        "reply",
+        "repond",
+        "répond",
+        "reponds",
+        "réponds",
+        "repondre",
+        "répondre",
+        "reponse",
+        "réponse",
+    ]
+    return any(token in text for token in patterns)
+
+
+def _needs_tool_planner(messages: list[dict[str, Any]]) -> bool:
+    text = _last_user_message(messages)
+    if not text:
+        return False
+    lowered = text.lower()
+    if _should_force_tools(messages) or _is_reply_request(messages):
+        return True
+    multi_step_markers = [
+        " and ",
+        " et ",
+        " puis ",
+        " ensuite ",
+        " then ",
+        " after ",
+    ]
+    if any(marker in lowered for marker in multi_step_markers):
+        return True
+    segments = [seg.strip() for seg in re.split(r"[\\n;]+", text) if seg.strip()]
+    if len(segments) >= 2:
+        return True
+    sentences = [seg.strip() for seg in re.split(r"[.!?]+", text) if seg.strip()]
+    if len(sentences) >= 3:
+        return True
+    return len(text) >= 180
 
 
 def _tool_names_from_defs(tools: list[dict[str, Any]]) -> list[str]:
@@ -519,6 +602,7 @@ def _run_tool_loop(
     last_tool_calls: list[dict[str, Any]] | None = None
     last_content = ""
     force_tool_attempted = False
+    reply_request = _is_reply_request(messages)
     while steps < step_budget:
         if should_cancel and should_cancel():
             return "Stopped by user."
@@ -585,6 +669,19 @@ def _run_tool_loop(
         last_content = str(content).strip()
         if not tool_calls:
             final_content = str(content).strip()
+            if reply_request and not force_tool_attempted:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "The user asked to reply to an email. "
+                            "Use mail_search to find the message, then mail_reply. "
+                            "Do not draft a new email."
+                        ),
+                    }
+                )
+                force_tool_attempted = True
+                continue
             if _should_force_tools(messages) and not force_tool_attempted:
                 messages.append(
                     {
@@ -609,6 +706,20 @@ def _run_tool_loop(
             break
 
         used_tools = True
+        if reply_request and any(
+            (call.get("function") or {}).get("name") == "email_draft" for call in tool_calls
+        ):
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Do not use email_draft for replies. "
+                        "Call mail_search then mail_reply with the target mail_id or message_id."
+                    ),
+                }
+            )
+            steps += 1
+            continue
         messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
         last_tool_calls = tool_calls
         for call in tool_calls:
@@ -692,6 +803,7 @@ def _run_tool_plan_loop(
     tool_names = _tool_names_from_defs(tools)
     plan_prompt = _build_tool_plan_prompt(tools)
     force_tool_attempted = False
+    reply_request = _is_reply_request(messages)
 
     while steps < step_budget:
         if should_cancel and should_cancel():
@@ -717,6 +829,18 @@ def _run_tool_plan_loop(
         invalid_count = 0
         final_text = str(plan.get("final") or "").strip()
         if final_text:
+            if reply_request and not force_tool_attempted:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "The user asked to reply to an email. "
+                            "Return tool_calls for mail_search and mail_reply."
+                        ),
+                    }
+                )
+                force_tool_attempted = True
+                continue
             if _should_force_tools(messages) and not force_tool_attempted:
                 messages.append(
                     {
@@ -750,6 +874,20 @@ def _run_tool_plan_loop(
             continue
 
         used_tools = True
+        if reply_request and any(
+            str(call.get("name") or "") == "email_draft" for call in tool_calls if isinstance(call, dict)
+        ):
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Do not use email_draft for replies. "
+                        "Return tool_calls for mail_search then mail_reply."
+                    ),
+                }
+            )
+            steps += 1
+            continue
         last_tool_calls = tool_calls
         for call in tool_calls:
             if should_cancel and should_cancel():
@@ -1291,6 +1429,7 @@ def _tool_guidance(tool_names: Iterable[str]) -> list[str]:
         lines.append(
             "For images, save to JACQUES_GENERATED_DIR and the image will be attached automatically; avoid base64 data URIs."
         )
+        lines.append("Ensure generated files are saved under data/generated and report the full path.")
     if "excel_read_sheet" in names:
         lines.append(
             "Use excel_read_sheet to read data from specific Excel sheets when referenced."
@@ -1301,6 +1440,10 @@ def _tool_guidance(tool_names: Iterable[str]) -> list[str]:
         lines.append("Use news_search for current news queries.")
     if "web_fetch" in names:
         lines.append("Use web_fetch with a URL (and optional CSS selector) to scrape specific sites.")
+    if "mail_reply" in names:
+        lines.append(
+            "For replies, use mail_search to find the message, then mail_reply to draft the response (do not create a new email)."
+        )
     if "stock_history" in names:
         if "python_run" in names or "python" in names:
             lines.append(
